@@ -16,12 +16,8 @@ from sglang.srt.layers.dp_attention import (
 from sglang.srt.server_args import ServerArgs
 from sglang.srt.utils import get_bool_env_var
 
-from litespec.distributed import (
-    get_disaggregated_topology,
-)
-from litespec.distributed import (
-    get_tp_group as get_litespec_tp_group,
-)
+from litespec.distributed import get_disaggregated_topology
+from litespec.distributed import get_tp_group as get_litespec_tp_group
 
 logger = logging.getLogger(__name__)
 

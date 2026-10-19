@@ -87,7 +87,9 @@ def load_hidden_cache_manifest(
     final_layer_id = int(manifest.get("final_norm_layer_id", -1))
     if final_layer_id != int(num_hidden_layers) - 1:
         raise HiddenCacheError("regen_full final-norm layer ID is invalid")
-    stored_layer_ids = {int(value) for value in manifest.get("stored_hidden_layer_ids", [])}
+    stored_layer_ids = {
+        int(value) for value in manifest.get("stored_hidden_layer_ids", [])
+    }
     missing_layer_ids = sorted(set(required_layer_ids) - stored_layer_ids)
     if final_layer_id not in stored_layer_ids:
         missing_layer_ids = sorted(set(missing_layer_ids) | {final_layer_id})

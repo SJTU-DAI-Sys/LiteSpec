@@ -10,7 +10,10 @@ import torch
 from litespec.core.dflash import OnlineDFlashModel
 from litespec.core.dflash2 import OnlineDFlash2Model
 from litespec.core.dspark import OnlineDSparkModel
-from litespec.distributed.transport import DFlashFamilyBatchPacket, DFlashFamilyPacketSpec
+from litespec.distributed.transport import (
+    DFlashFamilyBatchPacket,
+    DFlashFamilyPacketSpec,
+)
 from litespec.modeling.config_utils import load_text_model_config
 from litespec.modeling.draft.dflash import build_target_layer_ids
 from litespec.training.algorithms import TrainingAdapter, get_training_adapter
@@ -28,7 +31,9 @@ DFLASH_FAMILY_ALGORITHMS = ("dflash", "dflash2", "dspark")
 
 class DFlashFamilyTrainingAdapter(TrainingAdapter):
     def build_config(self, args, *, source_config=None, model_role=None):
-        return build_dflash_family_config(args, self.algorithm, source_config=source_config)
+        return build_dflash_family_config(
+            args, self.algorithm, source_config=source_config
+        )
 
     def prepare_batch(self, data, target_output, draft, require_last):
         return prepare_dflash_family_features(data, target_output, draft, require_last)
@@ -235,7 +240,9 @@ def add_dflash_family_args(parser: argparse.ArgumentParser, algorithm: str) -> N
     train.add_argument("--confidence-loss-alpha", type=float, default=1.0)
 
 
-def validate_dflash_family_args(parser: argparse.ArgumentParser, args, algorithm: str) -> None:
+def validate_dflash_family_args(
+    parser: argparse.ArgumentParser, args, algorithm: str
+) -> None:
     validate_common_args(parser, args)
     if args.resume_from and args.init_from:
         parser.error("--resume-from and --init-from are mutually exclusive")

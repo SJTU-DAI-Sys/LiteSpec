@@ -6,9 +6,7 @@ from .hidden_cache import (
     load_hidden_cache_manifest,
     sample_metadata_has_valid_anchor,
 )
-from .preprocessing import (
-    build_training_dataset,
-)
+from .preprocessing import build_training_dataset
 from .utils import prepare_dp_dataloaders
 
 __all__ = [

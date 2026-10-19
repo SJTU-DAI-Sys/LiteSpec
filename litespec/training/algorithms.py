@@ -8,7 +8,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    import argparse
+    pass
 
     from torch.distributed import ProcessGroup
     from torch.distributed.fsdp import FullyShardedDataParallel
@@ -72,6 +72,7 @@ class TrainingSession:
     disaggregate topology. Runner and recipes read dependencies from here
     instead of implicit globals.
     """
+
     args: Any
     adapter: DFlashFamilyTrainingAdapter | DLiteTrainingAdapter
     phases: list[Phase]
@@ -81,7 +82,11 @@ class TrainingSession:
     ) = None
     teacher: DLiteDraftModel | None = None
     draft_online: (
-        OnlineDFlashModel | OnlineDFlash2Model | OnlineDSparkModel | OnlineDLiteModel | None
+        OnlineDFlashModel
+        | OnlineDFlash2Model
+        | OnlineDSparkModel
+        | OnlineDLiteModel
+        | None
     ) = None
     teacher_online: OnlineDLiteModel | None = None
     fsdp_model: FullyShardedDataParallel | None = None

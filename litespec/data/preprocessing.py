@@ -26,9 +26,8 @@ import warnings
 from typing import Dict, List, Optional, Union
 
 import torch
-from transformers import ImageProcessingMixin, PreTrainedTokenizer
-
 from datasets import Dataset as HFDataset
+from transformers import ImageProcessingMixin, PreTrainedTokenizer
 
 try:
     from qwen_vl_utils import process_vision_info

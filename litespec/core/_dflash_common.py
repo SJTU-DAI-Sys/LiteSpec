@@ -304,7 +304,10 @@ class DFlashTrainingBase(nn.Module):
         device = input_ids.device
 
         noise_ids = torch.full(
-            (bsz, num_blocks * block_size), self.mask_token_id, dtype=torch.long, device=device
+            (bsz, num_blocks * block_size),
+            self.mask_token_id,
+            dtype=torch.long,
+            device=device,
         )
 
         block_starts = torch.arange(num_blocks, device=device) * block_size
@@ -313,7 +316,9 @@ class DFlashTrainingBase(nn.Module):
         valid_anchor_positions = anchor_positions.clamp(0, seq_len - 1)
         anchor_tokens = torch.gather(input_ids, 1, valid_anchor_positions)
 
-        flat_batch_idx = torch.arange(bsz, device=device).unsqueeze(1).expand(bsz, num_blocks)
+        flat_batch_idx = (
+            torch.arange(bsz, device=device).unsqueeze(1).expand(bsz, num_blocks)
+        )
         # masked_fill with a scalar avoids a pageable H2D copy per microbatch.
         noise_ids[flat_batch_idx, block_starts] = anchor_tokens.masked_fill(
             ~block_keep_mask, self.mask_token_id
@@ -668,7 +673,9 @@ class DFlashTrainingBase(nn.Module):
         bsz, num_blocks, block_size, hidden_size = draft_block_hidden_states.shape
         if logits is None:
             logits = self.lm_head(
-                draft_block_hidden_states.reshape(bsz, num_blocks * block_size, hidden_size)
+                draft_block_hidden_states.reshape(
+                    bsz, num_blocks * block_size, hidden_size
+                )
             ).reshape(bsz, num_blocks, block_size, -1)
         transform = getattr(self.draft_model, "transform_unary_logits", None)
         objective_logits = logits if transform is None else transform(logits)

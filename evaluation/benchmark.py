@@ -7,9 +7,10 @@ from collections import defaultdict
 from itertools import chain
 from pathlib import Path
 from types import SimpleNamespace
-from loguru import logger
+
 import numpy as np
 import torch
+from loguru import logger
 from rich import print
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -18,13 +19,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from litespec.modeling.draft.dlite import DLiteDraftModel
-from litespec.modeling.draft.dlite import sample
-from litespec.modeling.kv_cache import make_target_cache
-
 from evaluation import distributed as dist
 from evaluation.model_loading import load_dlite_benchmark_models
 from evaluation.utils import load_and_process_dataset
+from litespec.modeling.draft.dlite import DLiteDraftModel, sample
+from litespec.modeling.kv_cache import make_target_cache
 
 DATASET_PATH_FILE = Path(__file__).resolve().with_name("dataset_path.json")
 

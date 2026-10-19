@@ -30,11 +30,13 @@ class OnlineDFlashModel(DFlashTrainingBase):
         bsz, seq_len = input_ids.shape
         device = input_ids.device
 
-        anchor_positions, block_keep_mask, draft_hidden_states = self._forward_draft_blocks(
-            input_ids=input_ids,
-            target_context_hidden=hidden_states,
-            loss_mask=loss_mask,
-            max_valid_anchors=max_valid_anchors,
+        anchor_positions, block_keep_mask, draft_hidden_states = (
+            self._forward_draft_blocks(
+                input_ids=input_ids,
+                target_context_hidden=hidden_states,
+                loss_mask=loss_mask,
+                max_valid_anchors=max_valid_anchors,
+            )
         )
 
         # --- Labels: same-position prediction (position k predicts token anchor+k) ---
@@ -92,20 +94,32 @@ class OnlineDFlashModel(DFlashTrainingBase):
                 # never retains its graph or runs again during checkpoint replay.
                 with torch.no_grad():
                     terms = self._dflash_metric_chunk_terms(
-                        hidden, ids, weights, predecessors, teacher_hidden,
+                        hidden,
+                        ids,
+                        weights,
+                        predecessors,
+                        teacher_hidden,
                         logits=logits,
                     )
-                    metric_totals = terms if metric_totals is None else DFlashMetricTerms(
-                        *(a + b for a, b in zip(metric_totals, terms))
+                    metric_totals = (
+                        terms
+                        if metric_totals is None
+                        else DFlashMetricTerms(
+                            *(a + b for a, b in zip(metric_totals, terms))
+                        )
                     )
 
             return self._dflash_objective_chunk_terms(
-                hidden, ids, weights, predecessors,
+                hidden,
+                ids,
+                weights,
+                predecessors,
                 collect_detailed_metrics=(
                     collect_detailed_metrics and not is_chunk_recomputing()
                 ),
                 metrics_callback=(
-                    collect if collect_detailed_metrics and not is_chunk_recomputing()
+                    collect
+                    if collect_detailed_metrics and not is_chunk_recomputing()
                     else None
                 ),
             )
@@ -148,20 +162,24 @@ class OnlineDFlashModel(DFlashTrainingBase):
             loss_num = loss_num + effective_selector_alpha * selector_loss_num
 
         loss_denominator = loss_den
-        ratio_metrics = {
-            "hard_label/token_accuracy": (
-                correct_num.detach(),
-                accuracy_denom.detach(),
-            ),
-            "hard_label/gold_probability": (
-                target_probability_num.detach(),
-                accuracy_denom.detach(),
-            ),
-            "objective/ce": (
-                ce_loss_num.detach(),
-                loss_denominator.detach(),
-            ),
-        } if collect_detailed_metrics else {}
+        ratio_metrics = (
+            {
+                "hard_label/token_accuracy": (
+                    correct_num.detach(),
+                    accuracy_denom.detach(),
+                ),
+                "hard_label/gold_probability": (
+                    target_probability_num.detach(),
+                    accuracy_denom.detach(),
+                ),
+                "objective/ce": (
+                    ce_loss_num.detach(),
+                    loss_denominator.detach(),
+                ),
+            }
+            if collect_detailed_metrics
+            else {}
+        )
         candidate_selector = getattr(self.draft_model, "candidate_selector", None)
         sum_metrics = {}
         if collect_detailed_metrics:

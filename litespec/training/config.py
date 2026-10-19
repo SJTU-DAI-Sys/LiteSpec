@@ -243,7 +243,9 @@ def validate_common_args(parser: argparse.ArgumentParser, args) -> None:
             "draft_ranks_per_node",
             "node_batch_size",
         )
-        missing_arg_names = [name for name in required_arg_names if getattr(args, name) is None]
+        missing_arg_names = [
+            name for name in required_arg_names if getattr(args, name) is None
+        ]
         if missing_arg_names:
             parser.error(
                 "--disaggregate requires "

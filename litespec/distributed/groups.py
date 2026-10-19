@@ -444,17 +444,17 @@ def init_distributed(
 
     world_size = dist.get_world_size()
     dp_size = world_size // tp_size
-    assert world_size == tp_size * dp_size, (
-        f"world size must be divisible by tp size, now {world_size=}, {(tp_size * dp_size)=} "
-    )
+    assert (
+        world_size == tp_size * dp_size
+    ), f"world size must be divisible by tp size, now {world_size=}, {(tp_size * dp_size)=} "
 
     device_mesh = dist.device_mesh.init_device_mesh(
         "cuda", (dp_size, tp_size), mesh_dim_names=("dp", "tp")
     )
 
-    assert world_size % (sp_ulysses_size * sp_ring_size) == 0, (
-        f"World size ({world_size}) cannot be evenly divided by total SP size ({sp_ulysses_size * sp_ring_size})"
-    )
+    assert (
+        world_size % (sp_ulysses_size * sp_ring_size) == 0
+    ), f"World size ({world_size}) cannot be evenly divided by total SP size ({sp_ulysses_size * sp_ring_size})"
 
     draft_dp_size = world_size // (sp_ulysses_size * sp_ring_size)
     draft_device_mesh = dist.device_mesh.init_device_mesh(
@@ -473,16 +473,7 @@ def init_distributed(
     # we need to create a 1D submesh
     tp_device_mesh = dist.DeviceMesh.from_group(tp_group, device_type="cuda")
 
-    global \
-        _TP_GROUP, \
-        _DP_GROUP, \
-        _DEVICE_MESH, \
-        _TP_DEVICE_MESH, \
-        _DP_DEVICE_MESH, \
-        _SP_RING_GROUP, \
-        _SP_ULYSSES_GROUP, \
-        _DRAFT_DP_GROUP, \
-        _DRAFT_SP_GROUP
+    global _TP_GROUP, _DP_GROUP, _DEVICE_MESH, _TP_DEVICE_MESH, _DP_DEVICE_MESH, _SP_RING_GROUP, _SP_ULYSSES_GROUP, _DRAFT_DP_GROUP, _DRAFT_SP_GROUP
     _DEVICE_MESH = device_mesh
     _TP_GROUP = tp_group
     _TP_DEVICE_MESH = tp_device_mesh

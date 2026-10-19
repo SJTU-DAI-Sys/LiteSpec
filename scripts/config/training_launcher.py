@@ -85,7 +85,9 @@ def load_yaml_config(
     unknown = sorted(set(launcher) - allowed)
     if unknown:
         raise ConfigError(f"unknown launcher keys: {unknown}")
-    missing_field_names = [key for key in ("target_model", "output_dir") if not launcher.get(key)]
+    missing_field_names = [
+        key for key in ("target_model", "output_dir") if not launcher.get(key)
+    ]
     if missing_field_names:
         raise ConfigError(f"missing launcher keys: {missing_field_names}")
     if bool(launcher.get("train_data")) == bool(launcher.get("train_hidden_states")):
@@ -131,8 +133,14 @@ def validate_common_settings(
         return
     if offline:
         raise ConfigError("disaggregate supports train_data only")
-    required_arg_names = ("target_ranks_per_node", "draft_ranks_per_node", "node_batch_size")
-    missing_arg_names = [name for name in required_arg_names if arguments.get(name) is None]
+    required_arg_names = (
+        "target_ranks_per_node",
+        "draft_ranks_per_node",
+        "node_batch_size",
+    )
+    missing_arg_names = [
+        name for name in required_arg_names if arguments.get(name) is None
+    ]
     if missing_arg_names:
         raise ConfigError(
             "disaggregate requires "

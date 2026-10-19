@@ -530,9 +530,7 @@ def _sample_anchors(args, topology, loss_mask, batch_id, metadata):
     if topology.is_target_leader:
         max_anchor = max(seq_len - int(args.block_size), 0)
         valid_anchor_mask = loss_mask[:, : max_anchor + 1] > 0.5
-        valid_anchor_mask = valid_anchor_mask & (
-            loss_mask[:, 1 : max_anchor + 2] > 0.5
-        )
+        valid_anchor_mask = valid_anchor_mask & (loss_mask[:, 1 : max_anchor + 2] > 0.5)
         generator = torch.Generator(device=loss_mask.device)
         generator.manual_seed(
             int(args.seed)
@@ -577,7 +575,9 @@ def _prediction_hidden(target_last_hidden, anchor_positions, block_size):
         1, 1, -1
     )
     positions = anchor_positions.unsqueeze(-1) + offsets
-    expanded = target_last_hidden.unsqueeze(1).expand(-1, anchor_positions.size(1), -1, -1)
+    expanded = target_last_hidden.unsqueeze(1).expand(
+        -1, anchor_positions.size(1), -1, -1
+    )
     return torch.gather(
         expanded,
         2,
@@ -660,7 +660,9 @@ def _packet_spec(args, topology, phase, metadata):
 
 
 def _select_packet_layers(packet, available_layer_ids, required_layer_ids):
-    layer_indices = [available_layer_ids.index(int(layer_id)) for layer_id in required_layer_ids]
+    layer_indices = [
+        available_layer_ids.index(int(layer_id)) for layer_id in required_layer_ids
+    ]
     return packet.target_hidden[:, :, layer_indices, :]
 
 
@@ -851,12 +853,16 @@ def _distillation_step(session, data, *, collect_detailed_metrics=True):
     return TrainingOutput(
         loss=loss,
         loss_terms=RatioTerms(loss_numerator, loss_denominator),
-        ratio_metrics=({
-            "kl": RatioTerms(
-                loss_numerator / args.stage1_kl_weight,
-                loss_denominator,
-            )
-        } if collect_detailed_metrics else {}),
+        ratio_metrics=(
+            {
+                "kl": RatioTerms(
+                    loss_numerator / args.stage1_kl_weight,
+                    loss_denominator,
+                )
+            }
+            if collect_detailed_metrics
+            else {}
+        ),
     )
 
 
@@ -966,34 +972,48 @@ def _transition_step(session, data, *, collect_detailed_metrics=True):
     loss_denominator = (
         stage1_scale * stage1_loss_denominator + stage2_scale * stage2_loss_denominator
     )
-    zero_terms = (RatioTerms(stage2_loss.new_zeros(()), stage2_loss_denominator) if collect_detailed_metrics else None)
+    zero_terms = (
+        RatioTerms(stage2_loss.new_zeros(()), stage2_loss_denominator)
+        if collect_detailed_metrics
+        else None
+    )
     return TrainingOutput(
         loss=loss,
         loss_terms=RatioTerms(loss_numerator, loss_denominator),
-        ratio_metrics=({
-            "stage1_loss": RatioTerms(stage1_loss_numerator, stage1_loss_denominator),
-            "stage2_loss": stage2_output.loss_terms,
-            "kl": RatioTerms(
-                stage1_loss_numerator / args.stage1_kl_weight,
-                stage1_loss_denominator,
-            ),
-            "accuracy": stage2_output.ratio_metrics["hard_label/token_accuracy"],
-            "hard_label/block_accepted_length": stage2_output.ratio_metrics[
-                "hard_label/block_accepted_length"
-            ],
-            "expected_accept_len": stage2_output.ratio_metrics["expected_accept_len"],
-            "final_ce": stage2_output.ratio_metrics["objective/final_ce"],
-            "base_ce": stage2_output.ratio_metrics.get("objective/base_ce", zero_terms),
-            "l1_distance": stage2_output.ratio_metrics.get(
-                "objective/l1_distance", zero_terms
-            ),
-            "stage1_weight_scale": RatioTerms(
-                loss.new_tensor(stage1_scale), loss.new_ones(())
-            ),
-            "stage2_weight_scale": RatioTerms(
-                loss.new_tensor(stage2_scale), loss.new_ones(())
-            ),
-        } if collect_detailed_metrics else {}),
+        ratio_metrics=(
+            {
+                "stage1_loss": RatioTerms(
+                    stage1_loss_numerator, stage1_loss_denominator
+                ),
+                "stage2_loss": stage2_output.loss_terms,
+                "kl": RatioTerms(
+                    stage1_loss_numerator / args.stage1_kl_weight,
+                    stage1_loss_denominator,
+                ),
+                "accuracy": stage2_output.ratio_metrics["hard_label/token_accuracy"],
+                "hard_label/block_accepted_length": stage2_output.ratio_metrics[
+                    "hard_label/block_accepted_length"
+                ],
+                "expected_accept_len": stage2_output.ratio_metrics[
+                    "expected_accept_len"
+                ],
+                "final_ce": stage2_output.ratio_metrics["objective/final_ce"],
+                "base_ce": stage2_output.ratio_metrics.get(
+                    "objective/base_ce", zero_terms
+                ),
+                "l1_distance": stage2_output.ratio_metrics.get(
+                    "objective/l1_distance", zero_terms
+                ),
+                "stage1_weight_scale": RatioTerms(
+                    loss.new_tensor(stage1_scale), loss.new_ones(())
+                ),
+                "stage2_weight_scale": RatioTerms(
+                    loss.new_tensor(stage2_scale), loss.new_ones(())
+                ),
+            }
+            if collect_detailed_metrics
+            else {}
+        ),
     )
 
 
@@ -1098,12 +1118,16 @@ def _packet_step(
             metric_output = TrainingOutput(
                 loss=loss,
                 loss_terms=RatioTerms(numerator, denominator),
-                ratio_metrics=({
-                    "kl": RatioTerms(
-                        numerator / args.stage1_kl_weight,
-                        denominator,
-                    )
-                } if collect_detailed_metrics else {}),
+                ratio_metrics=(
+                    {
+                        "kl": RatioTerms(
+                            numerator / args.stage1_kl_weight,
+                            denominator,
+                        )
+                    }
+                    if collect_detailed_metrics
+                    else {}
+                ),
             )
         else:
             target_logits = _target_logits(
@@ -1149,31 +1173,41 @@ def _packet_step(
             loss = stage1_scale * stage1_loss + stage2_scale * stage2_loss
             numerator = stage1_scale * stage1_num + stage2_scale * stage2_num
             denominator = stage1_scale * stage1_den + stage2_scale * stage2_den
-            zero_terms = (RatioTerms(stage2_loss.new_zeros(()), stage2_den) if collect_detailed_metrics else None)
+            zero_terms = (
+                RatioTerms(stage2_loss.new_zeros(()), stage2_den)
+                if collect_detailed_metrics
+                else None
+            )
             metric_output = TrainingOutput(
                 loss=loss,
                 loss_terms=RatioTerms(numerator, denominator),
-                ratio_metrics=({
-                    "kl": RatioTerms(
-                        stage1_num / args.stage1_kl_weight,
-                        stage1_den,
-                    ),
-                    "stage2_loss": supervised.loss_terms,
-                    "accuracy": supervised.ratio_metrics["hard_label/token_accuracy"],
-                    "hard_label/block_accepted_length": supervised.ratio_metrics[
-                        "hard_label/block_accepted_length"
-                    ],
-                    "expected_accept_len": supervised.ratio_metrics[
-                        "expected_accept_len"
-                    ],
-                    "final_ce": supervised.ratio_metrics["objective/final_ce"],
-                    "base_ce": supervised.ratio_metrics.get(
-                        "objective/base_ce", zero_terms
-                    ),
-                    "l1_distance": supervised.ratio_metrics.get(
-                        "objective/l1_distance", zero_terms
-                    ),
-                } if collect_detailed_metrics else {}),
+                ratio_metrics=(
+                    {
+                        "kl": RatioTerms(
+                            stage1_num / args.stage1_kl_weight,
+                            stage1_den,
+                        ),
+                        "stage2_loss": supervised.loss_terms,
+                        "accuracy": supervised.ratio_metrics[
+                            "hard_label/token_accuracy"
+                        ],
+                        "hard_label/block_accepted_length": supervised.ratio_metrics[
+                            "hard_label/block_accepted_length"
+                        ],
+                        "expected_accept_len": supervised.ratio_metrics[
+                            "expected_accept_len"
+                        ],
+                        "final_ce": supervised.ratio_metrics["objective/final_ce"],
+                        "base_ce": supervised.ratio_metrics.get(
+                            "objective/base_ce", zero_terms
+                        ),
+                        "l1_distance": supervised.ratio_metrics.get(
+                            "objective/l1_distance", zero_terms
+                        ),
+                    }
+                    if collect_detailed_metrics
+                    else {}
+                ),
             )
     else:
         target_logits = _target_logits(
@@ -1225,6 +1259,7 @@ class DLiteTrainingAdapter(TrainingAdapter):
     Replays skipped packets on training restart, waits for phase barriers
     before starting a new phase, and produces checkpoint metadata.
     """
+
     replay_skipped = False
     phase_barrier = True
 
@@ -1255,14 +1290,14 @@ class DLiteTrainingAdapter(TrainingAdapter):
                 Phase(
                     "transition",
                     2,
-                    1, # transition epochs, ddefault=1
+                    1,  # transition epochs, ddefault=1
                     True,
                     False,
                     log_at_schedule_end=False,
                     checkpoint_prefix="transition/",
-                    final_checkpoint="transition/final"
-                    if args.disaggregate
-                    else "transition",
+                    final_checkpoint=(
+                        "transition/final" if args.disaggregate else "transition"
+                    ),
                     start_checkpoint=None if args.disaggregate else "transition/start",
                 ),
                 Phase(
@@ -1409,7 +1444,10 @@ class DLiteTrainingAdapter(TrainingAdapter):
     ):
         if session.topology is not None:
             return _packet_step(
-                session, data, microbatch_start, microbatch_end,
+                session,
+                data,
+                microbatch_start,
+                microbatch_end,
                 collect_detailed_metrics=collect_detailed_metrics,
             )
         if session.phase.name == "stage1":
@@ -1429,7 +1467,9 @@ class DLiteTrainingAdapter(TrainingAdapter):
 
     def target_proxies(self, session):
         metadata = session.packet_metadata
-        capture_layer_ids = set(metadata["target_layer_ids"]) | set(metadata["history_layer_ids"])
+        capture_layer_ids = set(metadata["target_layer_ids"]) | set(
+            metadata["history_layer_ids"]
+        )
         if any(phase.need_prediction_hidden for phase in session.phases):
             capture_layer_ids.add(metadata["num_target_layers"] - 1)
         return [

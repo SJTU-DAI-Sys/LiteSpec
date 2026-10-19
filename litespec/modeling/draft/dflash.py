@@ -174,7 +174,9 @@ def validate_dflash_mla_config(config: Qwen3Config) -> None:
         name for name in required_field_names if getattr(config, name, None) is None
     ]
     if missing_field_names:
-        raise ValueError(f"MLA draft config is missing required fields: {missing_field_names}")
+        raise ValueError(
+            f"MLA draft config is missing required fields: {missing_field_names}"
+        )
 
     q_lora_rank = getattr(config, "q_lora_rank", None)
     if q_lora_rank is not None and int(q_lora_rank) <= 0:
@@ -297,9 +299,9 @@ class Qwen3DFlashAttentionBase(nn.Module):
         self.layer_idx = layer_idx
         self.attention_dropout = config.attention_dropout
         if config._attn_implementation == "flex_attention":
-            assert config.attention_dropout == 0.0, (
-                "DFlash FlexAttention requires attention_dropout=0.0"
-            )
+            assert (
+                config.attention_dropout == 0.0
+            ), "DFlash FlexAttention requires attention_dropout=0.0"
         self.is_causal = False
         self.sliding_window = (
             config.sliding_window
@@ -308,9 +310,9 @@ class Qwen3DFlashAttentionBase(nn.Module):
         )
         self._init_projections(config, kernels)
         for attribute in ("scaling", "num_key_value_groups", "o_proj"):
-            assert hasattr(self, attribute), (
-                f"_init_projections must define {attribute}"
-            )
+            assert hasattr(
+                self, attribute
+            ), f"_init_projections must define {attribute}"
 
     def _init_projections(self, config: Qwen3Config, kernels: DFlashKernels) -> None:
         raise NotImplementedError

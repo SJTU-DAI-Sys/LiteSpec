@@ -659,10 +659,14 @@ def sample_payload(
     length = int(attention.sum().item())
     if length <= 0:
         raise HiddenStateError("sample has no attended tokens")
-    target_hidden_states = normalize_hidden_states(output.hidden_states, stored_layer_ids)
+    target_hidden_states = normalize_hidden_states(
+        output.hidden_states, stored_layer_ids
+    )
     missing_layer_ids = sorted(set(stored_layer_ids) - set(target_hidden_states))
     if missing_layer_ids:
-        raise HiddenStateError(f"target did not return requested layers {missing_layer_ids}")
+        raise HiddenStateError(
+            f"target did not return requested layers {missing_layer_ids}"
+        )
     if final_norm_layer_id not in target_hidden_states:
         raise HiddenStateError(
             f"target did not return final-norm layer {final_norm_layer_id}"
@@ -778,9 +782,9 @@ def default_output_path(data_path: str, target_model_path: str) -> Path:
 def run_generation(args: argparse.Namespace) -> dict[str, Any] | None:
     import torch
     import torch.distributed as dist
+    from datasets import load_dataset
     from transformers import AutoConfig, AutoTokenizer
 
-    from datasets import load_dataset
     from litespec.args import SGLangBackendArgs
     from litespec.data import build_training_dataset
     from litespec.distributed import (
@@ -894,7 +898,9 @@ def run_generation(args: argparse.Namespace) -> dict[str, Any] | None:
 
         raw_dataset = load_dataset("json", data_files=str(input_path))["train"]
         if args.num_samples is not None:
-            raw_dataset = raw_dataset.select(range(min(args.num_samples, len(raw_dataset))))
+            raw_dataset = raw_dataset.select(
+                range(min(args.num_samples, len(raw_dataset)))
+            )
         cache_key = hashlib.sha256(
             json.dumps(
                 {

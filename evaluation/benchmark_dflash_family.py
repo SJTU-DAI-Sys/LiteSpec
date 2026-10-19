@@ -12,14 +12,20 @@ from rich import print
 from tqdm import tqdm
 
 from evaluation import distributed as dist
-from evaluation.benchmark import load_benchmark_dataset, select_max_samples, target_generate
+from evaluation.benchmark import (
+    load_benchmark_dataset,
+    select_max_samples,
+    target_generate,
+)
 from evaluation.dflash_model_loading import load_dflash_benchmark_models
 from litespec.modeling.kv_cache import make_target_cache
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--algorithm", choices=("dflash", "dflash2", "dspark"), required=True)
+    parser.add_argument(
+        "--algorithm", choices=("dflash", "dflash2", "dspark"), required=True
+    )
     parser.add_argument("--model-name-or-path", required=True)
     parser.add_argument("--draft-name-or-path", required=True)
     parser.add_argument("--dataset", required=True)
@@ -55,7 +61,9 @@ def main():
     stop_ids = [value for value in (tokenizer.eos_token_id,) if value is not None]
     dataset = select_max_samples(load_benchmark_dataset(args.dataset), args.max_samples)
     responses = []
-    for index in tqdm(range(dist.rank(), len(dataset), dist.size()), disable=not dist.is_main()):
+    for index in tqdm(
+        range(dist.rank(), len(dataset), dist.size()), disable=not dist.is_main()
+    ):
         messages = []
         for turn in dataset[index]["turns"]:
             messages.append({"role": "user", "content": str(turn)})

@@ -30,8 +30,10 @@ def test_training_and_inference_rope_positions(anchor, teacher, architecture_ver
         token_keep_mask=torch.ones(2, 1, 1, dtype=torch.bool),
     )
     local_offset = 0 if architecture_version == "dlite_v1" else 1
-    expected_queries = list(range(anchor, anchor + 4)) if teacher else list(
-        range(local_offset, local_offset + 4)
+    expected_queries = (
+        list(range(anchor, anchor + 4))
+        if teacher
+        else list(range(local_offset, local_offset + 4))
     )
     expected_context = [max(anchor - 1, 0)] * 2 if teacher else [0, 0]
     assert queries.tolist() == [expected_queries] * 2

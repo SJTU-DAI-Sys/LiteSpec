@@ -40,7 +40,10 @@ def build_node_routes(
         producer_start = producer * producer_batch_size
         producer_end = (producer + 1) * producer_batch_size
         for draft in range(drafts):
-            draft_start, draft_end = draft * draft_batch_size, (draft + 1) * draft_batch_size
+            draft_start, draft_end = (
+                draft * draft_batch_size,
+                (draft + 1) * draft_batch_size,
+            )
             start, end = max(producer_start, draft_start), min(producer_end, draft_end)
             if start < end:
                 routes.append(
@@ -269,7 +272,9 @@ class NodePacketTransport:
                     [batch_id, phase_id, schema_id], dtype=torch.long, device="cuda"
                 )
                 keepalive.append(packet_header)
-                ops.append(dist.P2POp(dist.isend, packet_header, peer, group=self.group))
+                ops.append(
+                    dist.P2POp(dist.isend, packet_header, peer, group=self.group)
+                )
                 for tensor in packet.batch_slice(
                     route.producer_start, route.producer_end
                 ):
@@ -304,7 +309,9 @@ class NodePacketTransport:
                 peer = self._producer_rank(route.producer)
                 packet_header = torch.empty((3,), dtype=torch.long, device="cuda")
                 packet_headers.append(packet_header)
-                ops.append(dist.P2POp(dist.irecv, packet_header, peer, group=self.group))
+                ops.append(
+                    dist.P2POp(dist.irecv, packet_header, peer, group=self.group)
+                )
                 for tensor in packet.batch_slice(route.draft_start, route.draft_end):
                     ops.append(dist.P2POp(dist.irecv, tensor, peer, group=self.group))
             works = dist.batch_isend_irecv(ops) if ops else []

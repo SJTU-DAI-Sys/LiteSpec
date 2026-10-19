@@ -11,9 +11,7 @@ from sglang.srt.distributed import (
     set_mscclpp_all_reduce,
     set_torch_symm_mem_all_reduce,
 )
-from sglang.srt.layers.dp_attention import (
-    get_attention_tp_group,
-)
+from sglang.srt.layers.dp_attention import get_attention_tp_group
 from sglang.srt.model_executor.model_runner import ModelRunner
 from sglang.srt.utils import (
     cpu_has_amx_support,

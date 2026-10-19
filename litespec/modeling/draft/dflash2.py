@@ -447,7 +447,9 @@ class DFlash2DraftModel(DFlashDraftModel):
         """Return the official sparse selector proposal for verification."""
 
         draft_prediction_hidden = draft_hidden[:, -self.block_size + 1 :, :]
-        unary_logits = self.transform_unary_logits(target_lm_head(target)(draft_prediction_hidden))
+        unary_logits = self.transform_unary_logits(
+            target_lm_head(target)(draft_prediction_hidden)
+        )
         unary_topk, candidate_ids = unary_logits.topk(
             self.candidate_selector.top_k,
             dim=-1,

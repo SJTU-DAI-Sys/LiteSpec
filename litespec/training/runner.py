@@ -7,6 +7,7 @@ input streams differ; a packet's microbatches never change accumulation counts.
 import os
 from pathlib import Path
 
+
 # Isolate each rank's Triton/Inductor/TVM compile cache so concurrent
 # torchrun processes do not corrupt a shared kernel-build directory.
 def configure_rank_caches():
@@ -138,7 +139,9 @@ def iter_microbatch_slices(session):
     if session.topology is None:
         yield None, None
     else:
-        local_batch_size = session.args.node_batch_size // session.args.draft_ranks_per_node
+        local_batch_size = (
+            session.args.node_batch_size // session.args.draft_ranks_per_node
+        )
         micro_batch_size = session.args.draft_micro_batch_size
         for microbatch_start in range(0, local_batch_size, micro_batch_size):
             yield microbatch_start, microbatch_start + micro_batch_size
@@ -201,7 +204,9 @@ def run_draft(session, *, batch_source=iter_logical_batches, save=None, log=log_
         session.optimizer, args.accumulation_steps, session.process_group
     )
     # Restore RNG state from checkpoint
-    pending_rng = session.resume_state["rng_state"] if session.resume_state is not None else None
+    pending_rng = (
+        session.resume_state["rng_state"] if session.resume_state is not None else None
+    )
     accumulated = 0
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
@@ -213,7 +218,8 @@ def run_draft(session, *, batch_source=iter_logical_batches, save=None, log=log_
         state.optimizer_step += 1
         accumulated = 0
         if (
-            tail or state.optimizer_step % args.log_interval == 0
+            tail
+            or state.optimizer_step % args.log_interval == 0
             or (
                 session.phase.log_at_schedule_end
                 and state.optimizer_step == session.total_steps
@@ -259,9 +265,11 @@ def run_draft(session, *, batch_source=iter_logical_batches, save=None, log=log_
                 # Every microbatch in a final partial window is logged by
                 # update(tail=True), even outside the regular interval.
                 or (
-                    accumulated + cur_phase.batch_count(session.steps_per_epoch)
+                    accumulated
+                    + cur_phase.batch_count(session.steps_per_epoch)
                     - state.phase_step
-                ) < args.accumulation_steps
+                )
+                < args.accumulation_steps
                 or (
                     cur_phase.log_at_schedule_end
                     and state.optimizer_step + 1 == session.total_steps
@@ -298,7 +306,9 @@ def run_draft(session, *, batch_source=iter_logical_batches, save=None, log=log_
         except StopIteration:
             pass
         else:
-            raise RuntimeError(f"{cur_phase.name} input exceeded the declared phase length")
+            raise RuntimeError(
+                f"{cur_phase.name} input exceeded the declared phase length"
+            )
         if accumulated:
             update(tail=True)
         if session.topology is None:
@@ -338,7 +348,9 @@ def run_target(session):
         if topology.is_target_leader
         else None
     )
-    start_id = session.resume_state["cursor"]["global_step"] if session.resume_state else 0
+    start_id = (
+        session.resume_state["cursor"]["global_step"] if session.resume_state else 0
+    )
     batch_id = 0
     for phase in session.phases:
         spec = session.adapter.packet_spec(session, phase)
@@ -369,17 +381,23 @@ def run_target(session):
         if session.adapter.phase_barrier:
             dist.barrier()
 
+
 """Build the training session, run draft or target, then tear down process groups.
 - args: parsed CLI/YAML namespace from adapter.parse_args (data, topology, hyperparameter, …).
 - adapter: algorithm plugin (TrainingAdapter) for phases, models, and compute_step.
 """
+
+
 def run_training(args, adapter):
     import logging
     import traceback
+
     import torch.distributed as dist
-    from .setup import build_training_session
     from accelerate.utils import set_seed
+
     from litespec.distributed import destroy_distributed
+
+    from .setup import build_training_session
 
     logging.basicConfig(level=logging.INFO)
     if args.disaggregate and os.environ.get("LITESPEC_DISAGG_DEBUG") == "1":

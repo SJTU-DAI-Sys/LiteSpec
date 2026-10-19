@@ -11,12 +11,12 @@ from litespec.core.block_metrics import (
     expected_accept_len_terms,
 )
 from litespec.core.chunking import checkpointed_chunk_reduce, is_chunk_recomputing
-from litespec.core.outputs import RatioTerms, TrainingOutput
 from litespec.core.losses import (
-    weighted_cross_entropy,
-    weighted_ce_l1,
     weighted_binary_cross_entropy,
+    weighted_ce_l1,
+    weighted_cross_entropy,
 )
+from litespec.core.outputs import RatioTerms, TrainingOutput
 from litespec.modeling.draft.dflash import DFlashDraftModel
 
 from ._dflash_common import DFlashTrainingBase
@@ -353,20 +353,24 @@ class OnlineDSparkModel(DFlashTrainingBase):
         )
         loss = world_size * objective_num / global_loss_den
 
-        ratio_metrics = {
-            "hard_label/token_accuracy": (correct_num, eval_den),
-            "hard_label/block_accepted_length": (prefix_num, prefix_den),
-            "objective/ce": (ce_num.detach(), local_loss_den.detach()),
-            "objective/l1_distance": (l1_num.detach(), local_loss_den.detach()),
-            "confidence_loss": (
-                confidence_num.detach(),
-                local_loss_den.detach(),
-            ),
-            "confidence_abs_error": (
-                confidence_error_num.detach(),
-                local_loss_den.detach(),
-            ),
-        } if collect_detailed_metrics else {}
+        ratio_metrics = (
+            {
+                "hard_label/token_accuracy": (correct_num, eval_den),
+                "hard_label/block_accepted_length": (prefix_num, prefix_den),
+                "objective/ce": (ce_num.detach(), local_loss_den.detach()),
+                "objective/l1_distance": (l1_num.detach(), local_loss_den.detach()),
+                "confidence_loss": (
+                    confidence_num.detach(),
+                    local_loss_den.detach(),
+                ),
+                "confidence_abs_error": (
+                    confidence_error_num.detach(),
+                    local_loss_den.detach(),
+                ),
+            }
+            if collect_detailed_metrics
+            else {}
+        )
         if collect_detailed_metrics and aligned_target_hidden is not None:
             ratio_metrics.update(
                 {

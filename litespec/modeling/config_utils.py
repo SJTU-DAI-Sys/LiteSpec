@@ -55,7 +55,9 @@ def _qwen35_text_dict_to_qwen3_config(
         "num_key_value_heads",
         "head_dim",
     )
-    missing_field_names = [name for name in required_field_names if text_config.get(name) is None]
+    missing_field_names = [
+        name for name in required_field_names if text_config.get(name) is None
+    ]
     if intermediate_size is None:
         missing_field_names.append(
             "intermediate_size/shared_expert_intermediate_size/" "moe_intermediate_size"

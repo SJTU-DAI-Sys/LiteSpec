@@ -25,8 +25,8 @@ from litespec.core.block_training import (
     apply_exponential_position_decay,
     sample_sorted_anchors,
 )
+from litespec.core.losses import weighted_ce_l1, weighted_cross_entropy, weighted_kl
 from litespec.core.outputs import RatioTerms, TrainingOutput
-from litespec.core.losses import weighted_cross_entropy, weighted_ce_l1, weighted_kl
 from litespec.modeling.draft.dlite import DLiteDraftModel
 from litespec.modeling.draft.flex_attention import flex_kernel_options
 
@@ -495,7 +495,9 @@ class OnlineDLiteModel(nn.Module):
                 hidden_states=prediction_hidden,
                 prev_token_ids=prev_token_ids,
             )
-            final_logits = sequential_head.project_logits(latent[active_positions]).float()
+            final_logits = sequential_head.project_logits(
+                latent[active_positions]
+            ).float()
         else:
             # The transition objective shares this graph with Stage-1 KL.
             final_logits = serial_logits
@@ -533,7 +535,9 @@ class OnlineDLiteModel(nn.Module):
             base_denominator = final_denominator
         if self.l1_loss_weight > 0:
             final_ce_numerator, l1_numerator, _, l1_values = weighted_ce_l1(
-                final_logits.float(), active_ce_labels, active_target_logits,
+                final_logits.float(),
+                active_ce_labels,
+                active_target_logits,
                 active_final_weights,
             )
             if collect_detailed_metrics:
@@ -693,7 +697,9 @@ class OnlineDLiteModel(nn.Module):
                 prediction_hidden, prepared_batch
             )
             supervised = self.compute_supervised_loss(
-                prediction_hidden, prepared_batch, gathered_target_logits,
+                prediction_hidden,
+                prepared_batch,
+                gathered_target_logits,
                 serial_logits=student_serial_logits,
                 collect_detailed_metrics=collect_detailed_metrics,
             )
@@ -720,7 +726,9 @@ class OnlineDLiteModel(nn.Module):
             )
         )
         return self.compute_supervised_loss(
-            prediction_hidden, prepared_batch, gathered_target_logits,
+            prediction_hidden,
+            prepared_batch,
+            gathered_target_logits,
             collect_detailed_metrics=collect_detailed_metrics,
         )
 

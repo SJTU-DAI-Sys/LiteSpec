@@ -80,7 +80,10 @@ def build_fsdp_layouts(fsdp_model, parameters, specs, process_group=None):
                 flat._params, flat._shapes, flat._shard_param_infos, strict=True
             ):
                 shard = (
-                    (int(shard_info.intra_param_start_idx), int(shard_info.numel_in_shard))
+                    (
+                        int(shard_info.intra_param_start_idx),
+                        int(shard_info.numel_in_shard),
+                    )
                     if shard_info.in_shard
                     else (0, 0)
                 )

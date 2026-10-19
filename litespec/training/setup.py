@@ -9,6 +9,7 @@ from typing import Optional
 
 import torch
 import torch.distributed as dist
+from datasets import load_dataset
 from torch.distributed.fsdp import (
     FullyShardedDataParallel,
     MixedPrecision,
@@ -17,7 +18,6 @@ from torch.distributed.fsdp import (
 from torch.utils.data import DataLoader, DistributedSampler
 from transformers import AutoTokenizer
 
-from datasets import load_dataset
 from litespec.args import SGLangBackendArgs
 from litespec.data import (
     RegenFullCollator,
@@ -721,7 +721,9 @@ def build_training_session(args, adapter):
             os.makedirs(args.cache_dir, exist_ok=True)
         dist.barrier()
         session.resume_state = _load_common_state(args.resume_from, args=args)
-        validate_resume_topology(session.resume_state, topology_identity(args, topology))
+        validate_resume_topology(
+            session.resume_state, topology_identity(args, topology)
+        )
         if topology.is_draft:
             adapter.initialize(session)
         source = topology.draft_global_ranks[0]

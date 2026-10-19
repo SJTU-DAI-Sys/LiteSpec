@@ -100,10 +100,10 @@ tar handles alive with a bounded LRU, pins collated CPU tensors, and performs
 non-blocking GPU transfers. Schema-v2 caches created before the lightweight
 index was added must be regenerated.
 
-When `target_layer_ids` is non-empty, its unique, increasing, zero-based IDs  
-are used directly and `chs_num_layers` is ignored. Set it to null to  
-restore automatic evenly spaced selection by count. Qwen3.5 targets are loaded  
-through SGLang with FA3 while their DLite draft remains a dense Qwen3-style  
+When `target_layer_ids` is non-empty, its unique, increasing, zero-based IDs
+are used directly and `chs_num_layers` is ignored. Set it to null to
+restore automatic evenly spaced selection by count. Qwen3.5 targets are loaded
+through SGLang with FA3 while their DLite draft remains a dense Qwen3-style
 backbone with matching vocabulary and hidden dimensions.
 
 When `mask_token_id` is omitted, training preserves a value stored in a loaded

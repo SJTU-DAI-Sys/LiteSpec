@@ -2,12 +2,12 @@ import json
 import os
 import shutil
 import time
-import torch
-from typing import Optional
 from pathlib import Path
-from datasets import Dataset, load_dataset, load_from_disk, Features, Sequence, Value
-from huggingface_hub import hf_hub_download
+from typing import Optional
 
+import torch
+from datasets import Dataset, Features, Sequence, Value, load_dataset, load_from_disk
+from huggingface_hub import hf_hub_download
 
 NEMOTRON_LOCAL_DATA_DIR = Path(
     os.environ.get("NEMOTRON_LOCAL_DATA_DIR", "datasets/nemotron")
@@ -23,6 +23,7 @@ LONGBENCH_V2_FILE = Path(
 
 DATASET_CACHE_ROOT = Path(os.environ.get("DLITE_DATASET_CACHE", ".cache/datasets"))
 DATASET_CACHE_VERSION = "v1"
+
 
 def _load_livecodebench_jsonl_dataset():
     """Download LiveCodeBench lite JSONL shards via HF Hub (datasets no longer runs loading scripts)."""
@@ -54,6 +55,7 @@ def build_target_layer_ids(num_target_layers: int, num_draft_layers: int):
     ]
     return target_layer_ids
 
+
 def extract_context_feature(
     hidden_states: list[torch.Tensor],
     layer_ids: Optional[list[int]],
@@ -65,6 +67,7 @@ def extract_context_feature(
     target_hidden = torch.cat(selected_states, dim=-1)
     return target_hidden
 
+
 def sample(logits: torch.Tensor, temperature: float = 0.0) -> torch.Tensor:
     if temperature < 1e-5:
         return torch.argmax(logits, dim=-1)
@@ -74,12 +77,15 @@ def sample(logits: torch.Tensor, temperature: float = 0.0) -> torch.Tensor:
     probs = torch.softmax(logits, dim=-1)
     return torch.multinomial(probs, num_samples=1).view(bsz, seq_len)
 
+
 def _dataset_cache_dir(data_key: str) -> Path:
     safe_key = str(data_key).replace("/", "_")
     return DATASET_CACHE_ROOT / f"{safe_key}_{DATASET_CACHE_VERSION}"
 
 
-def _wait_for_ready_file(ready_file: Path, timeout_seconds: int = 7200, poll_seconds: float = 1.0):
+def _wait_for_ready_file(
+    ready_file: Path, timeout_seconds: int = 7200, poll_seconds: float = 1.0
+):
     deadline = time.time() + timeout_seconds
     while True:
         if ready_file.exists():
@@ -139,12 +145,12 @@ def _build_and_process_dataset(data_key: str):
         dataset = load_dataset("openai/gsm8k", "main", split="test")
         prompt_fmt = "{question}\nPlease reason step by step, and put your final answer within \\boxed{{}}."
         dataset = dataset.map(lambda x: {"turns": [prompt_fmt.format(**x)]})
-    
+
     elif data_key == "math500":
         dataset = load_dataset("HuggingFaceH4/MATH-500", split="test")
         prompt_fmt = "{problem}\nPlease reason step by step, and put your final answer within \\boxed{{}}."
         dataset = dataset.map(lambda x: {"turns": [prompt_fmt.format(**x)]})
-    
+
     elif data_key == "aime24":
         dataset = load_dataset("HuggingFaceH4/aime_2024", split="train")
         prompt_fmt = "{problem}\nPlease reason step by step, and put your final answer within \\boxed{{}}."
@@ -159,16 +165,24 @@ def _build_and_process_dataset(data_key: str):
         dataset = load_dataset("MathArena/apex_2025", split="train")
         prompt_fmt = "{problem}"
         dataset = dataset.map(lambda x: {"turns": [prompt_fmt.format(**x)]})
-        
+
     elif data_key == "arxivmath":
         dataset = load_dataset("MathArena/arxivmath-0226", split="train")
         prompt_fmt = "{problem}"
         dataset = dataset.map(lambda x: {"turns": [prompt_fmt.format(**x)]})
 
-    # Chat datasets 
+    # Chat datasets
     elif data_key == "alpaca":
         dataset = load_dataset("tatsu-lab/alpaca", split="train")
-        dataset = dataset.map(lambda x: {"formatted_input": (f"{x['instruction']}\n\nInput:\n{x['input']}" if x['input'] else x['instruction'])})
+        dataset = dataset.map(
+            lambda x: {
+                "formatted_input": (
+                    f"{x['instruction']}\n\nInput:\n{x['input']}"
+                    if x["input"]
+                    else x["instruction"]
+                )
+            }
+        )
         dataset = dataset.map(lambda x: {"turns": [x["formatted_input"]]})
 
     elif data_key == "mt-bench":
@@ -177,7 +191,9 @@ def _build_and_process_dataset(data_key: str):
 
     elif data_key == "longbench_v2":
         if not LONGBENCH_V2_FILE.exists():
-            raise FileNotFoundError(f"LongBench_v2 json file not found: {LONGBENCH_V2_FILE}")
+            raise FileNotFoundError(
+                f"LongBench_v2 json file not found: {LONGBENCH_V2_FILE}"
+            )
 
         with LONGBENCH_V2_FILE.open("r", encoding="utf-8") as f:
             rows = json.load(f)
@@ -208,7 +224,9 @@ def _build_and_process_dataset(data_key: str):
                 f"Nemotron local parquet directory not found: {NEMOTRON_LOCAL_DATA_DIR}"
             )
 
-        parquet_files = sorted(str(path) for path in NEMOTRON_LOCAL_DATA_DIR.glob("*.parquet"))
+        parquet_files = sorted(
+            str(path) for path in NEMOTRON_LOCAL_DATA_DIR.glob("*.parquet")
+        )
         if not parquet_files:
             raise FileNotFoundError(
                 f"No parquet files found under Nemotron directory: {NEMOTRON_LOCAL_DATA_DIR}"
@@ -250,11 +268,13 @@ def _build_and_process_dataset(data_key: str):
         dataset = load_dataset("openai/openai_humaneval", split="test")
         prompt_fmt = "Write a solution to the following problem and make sure that it passes the tests:\n```python\n{prompt}\n```"
         dataset = dataset.map(lambda x: {"turns": [prompt_fmt.format(**x)]})
-    
+
     elif data_key == "mbpp":
-        dataset = load_dataset("google-research-datasets/mbpp", "sanitized", split="test")
+        dataset = load_dataset(
+            "google-research-datasets/mbpp", "sanitized", split="test"
+        )
         dataset = dataset.map(lambda x: {"turns": [x["prompt"]]})
-    
+
     elif data_key == "lbpp":
         LBPP_PY_TEST_URL = "https://huggingface.co/datasets/CohereLabs/lbpp/resolve/main/python/test.parquet"
         dataset = load_dataset("parquet", data_files={"test": LBPP_PY_TEST_URL})["test"]
@@ -283,9 +303,10 @@ def _build_and_process_dataset(data_key: str):
             remove_columns=dataset.column_names,
             features=target_features,
         )
-    
+
     elif data_key == "livecodebench":
         dataset = _load_livecodebench_jsonl_dataset()
+
         def format_lcb(doc):
             system_prompt = (
                 "You are an expert Python programmer. You will be given a question (problem specification) "
@@ -301,16 +322,17 @@ def _build_and_process_dataset(data_key: str):
                 code_block = "```python\n# YOUR CODE HERE\n```"
             answer_footer = "### Answer: (use the provided format with backticks)"
             return f"{system_prompt}\n\n{question_block}\n\n{format_message}\n{code_block}\n\n{answer_footer}"
+
         target_features = Features({"turns": Sequence(Value("large_string"))})
         dataset = dataset.map(
             lambda x: {"turns": [format_lcb(x)]},
             remove_columns=dataset.column_names,
-            features=target_features
+            features=target_features,
         )
 
     else:
         raise ValueError(f"Unsupported dataset: {data_key}")
-    
+
     return dataset
 
 
@@ -324,7 +346,9 @@ def load_and_process_dataset(data_name: str):
 
     # nemotron 已预处理完成时，直接读本地缓存目录，不再走 parquet split/map。
     if data_key == "nemotron":
-        if cache_dir.exists() and (ready_file.exists() or (cache_dir / "dataset_info.json").exists()):
+        if cache_dir.exists() and (
+            ready_file.exists() or (cache_dir / "dataset_info.json").exists()
+        ):
             print(f"==> 直接加载已处理数据集: {cache_dir}")
             return load_from_disk(str(cache_dir))
         raise FileNotFoundError(
@@ -359,6 +383,7 @@ def load_and_process_dataset(data_name: str):
     print(f"==> 已保存处理后数据集缓存: {cache_dir}")
     return dataset
 
+
 def build_hybrid_attention_mask(
     bsz: int,
     prefix_len: int,
@@ -382,13 +407,11 @@ def build_hybrid_attention_mask(
     """
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
+
     T_total = prefix_len + block_size
-    
+
     # Initialize attention mask to False (all masked by default)
-    attn_mask = torch.zeros(
-        (bsz, 1, T_total, T_total), dtype=torch.bool, device=device
-    )
+    attn_mask = torch.zeros((bsz, 1, T_total, T_total), dtype=torch.bool, device=device)
 
     # 1. Within prefix: causal mask (each token can only see previous tokens including itself)
     #    [0:prefix_len, 0:prefix_len]
