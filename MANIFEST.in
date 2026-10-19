@@ -1,0 +1,10 @@
+include version.txt
+recursive-include scripts *.py *.sh *.yaml
+include scripts/train.md scripts/data/README.md
+include scripts/data/adapters/*.json
+exclude scripts/train_self.md
+recursive-include evaluation *.py *.sh
+include evaluation/dataset_path.json
+recursive-include docs *.md
+include tests/*.py
+include tests/fixtures/*.jsonl

@@ -1,0 +1,12 @@
+{
+  "prompt": {
+    "path": "prompt",
+    "kind": "text"
+  },
+  "source": {
+    "path": "source"
+  },
+  "category": {
+    "path": "category"
+  }
+}
