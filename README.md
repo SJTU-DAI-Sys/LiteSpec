@@ -150,11 +150,7 @@ bash evaluation/run_benchmark_dlite.sh
 
 Checkpoint model settings live under `dlite_config`. The public architecture is
 `DLiteDraftModel`; `dlite_v1` uses local anchor position 0 and `dlite_v2` uses
-local anchor position 1 while CHS remains at position 0. Missing versions and
-new training runs default to `dlite_v2`. The supported sequential-head type is
-`rnn`. Current DLite recipes and exports support Qwen3-4B/8B/14B and the
-text-only Qwen3.5-4B target. Release throughput and acceptance-length evaluation
-is run with the public `dlite-benchmark` command in the DLite inference repository.
+local anchor position 1 while CHS remains at position 0.
 
 ## Roadmap
 
