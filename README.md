@@ -16,8 +16,9 @@ evaluation. The student predicts a block in
 parallel and uses a lightweight `rnn` sequential head to restore token-to-token
 dependence inside the block.
 
-The repository contains the complete training stack. The sibling `DLite/`
-repository is the smaller inference-only release.
+The repository contains the complete training stack. The
+[DLite](https://github.com/SJTU-DAI-Sys/DLite) repository is the smaller
+inference-only release.
 
 ```bash
 uv sync --frozen --extra cu128  # Use --extra cu130 for CUDA 13.0
@@ -152,8 +153,8 @@ Checkpoint model settings live under `dlite_config`. The public architecture is
 local anchor position 1 while CHS remains at position 0. Missing versions and
 new training runs default to `dlite_v2`. The supported sequential-head type is
 `rnn`. Current DLite recipes and exports support Qwen3-4B/8B/14B and the
-text-only Qwen3.5-4B target. Release speed and greedy-equivalence evaluation is
-run with the public `dlite-benchmark` command in the DLite inference repository.
+text-only Qwen3.5-4B target. Release throughput and acceptance-length evaluation
+is run with the public `dlite-benchmark` command in the DLite inference repository.
 
 ## Roadmap
 

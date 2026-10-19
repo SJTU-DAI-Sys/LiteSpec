@@ -39,8 +39,8 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/alexwhz-sjtu/LiteSpec"
-Issues = "https://github.com/alexwhz-sjtu/LiteSpec/issues"
+Repository = "https://github.com/SJTU-DAI-Sys/LiteSpec"
+Issues = "https://github.com/SJTU-DAI-Sys/LiteSpec/issues"
 
 [project.optional-dependencies]
 fa = ["flash-attn"]

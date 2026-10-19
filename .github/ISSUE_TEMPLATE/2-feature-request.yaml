@@ -7,7 +7,7 @@ body:
   attributes:
     label: Checklist
     options:
-    - label: 1. If the issue you raised is not a feature but a question, please raise a discussion at https://github.com/alexwhz-sjtu/LiteSpec/discussions/new/choose Otherwise, it will be closed.
+    - label: 1. If the issue you raised is not a feature but a question, please raise a discussion at https://github.com/SJTU-DAI-Sys/LiteSpec/discussions/new/choose Otherwise, it will be closed.
     - label: 2. Please use English, otherwise it will be closed.
 - type: textarea
   attributes:

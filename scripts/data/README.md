@@ -67,7 +67,7 @@ the only component that knows the source dataset's original fields.
 
 ```bash
 python scripts/data/regenerate_train_data.py \
-  --model /data/wanghanzhen/models/Qwen/Qwen3-4B \
+  --model /path/to/Qwen3-4B \
   --input-file-path /path/to/prompts.jsonl \
   --server-address localhost:30000
 ```
@@ -86,14 +86,14 @@ outputs so the downstream four-field contract remains stable.
 ## 3. Save tokens and hidden states
 
 ```bash
-cd /data/wanghanzhen/projects/SpecDecoding/LiteSpec
+cd /path/to/LiteSpec
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
 .venv/bin/torchrun --nproc-per-node=8 \
 scripts/data/prepare_hidden_states.py \
-  --target-model-path /data/wanghanzhen/models/Qwen3-4B \
+  --target-model-path /path/to/Qwen3-4B \
   --target-model-backend sglang \
-  --data-path /data/wanghanzhen/projects/SpecDecoding/LiteSpec/cache/data/regen_token_only/wildchat_chinese_turns_le2_qwen3_4b_temp0.7_topk15_max4096.jsonl \
-  --output-path /data/wanghanzhen/projects/SpecDecoding/LiteSpec/cache/data/regen_full/wildchat_chinese_qwen3_4b \
+  --data-path ./cache/data/regen_token_only/wildchat_chinese_turns_le2_qwen3_4b_temp0.7_topk15_max4096.jsonl \
+  --output-path ./cache/data/regen_full/wildchat_chinese_qwen3_4b \
   --target-layer-ids 0,8,16,24,31 \
   --max-length 4096 \
   --tp-size 1 \
