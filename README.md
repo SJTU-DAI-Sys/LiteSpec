@@ -21,55 +21,46 @@ The repository contains the complete training stack. The
 inference-only release.
 
 ```bash
-uv sync --frozen --extra cu128  # Use --extra cu130 for CUDA 13.0
-source .venv/bin/activate
+bash scripts/setup_environment.sh cu130
+source .venv-cu130/bin/activate
 ```
 
 
 
 ## Environment
 
-The supported environment is Linux with:
+The validated environment is Linux x86_64 with:
 
 - CPython 3.11 (the repository pins it in `.python-version`);
 - an NVIDIA GPU with BF16 support and a driver compatible with the selected CUDA runtime (12.8 or 13.0);
 - a CUDA 12.x or 13.x toolkit matching the selected PyTorch CUDA major version when extensions must be built from source;
 - [uv](https://docs.astral.sh/uv/) 0.11 or newer.
 
-PyTorch 2.9.1 supports both CUDA 12.8 (`cu128`) and CUDA 13.0 (`cu130`).
-Both builds and their runtime libraries are recorded in the lock file.
-The system CUDA toolkit is only used to compile extensions, but its major
-version must match the PyTorch CUDA build. Check the environment before
-installing:
+The CUDA 13 route pins PyTorch 2.11.0, TorchVision 0.26.0, TorchAudio
+2.11.0, Transformers 5.12.1 and SGLang 0.5.16. SGLang's matching kernel
+and FlashInfer dependencies are resolved by `uv.lock`; extensions are rebuilt
+against the selected PyTorch ABI.
+
+The CUDA 12.8 route pins PyTorch 2.9.1, TorchVision 0.24.1, TorchAudio
+2.9.1, Transformers 5.3.0 and SGLang 0.5.10. A single version combination
+cannot cover both routes: SGLang 0.5.16 requires CUDA Python 13, while
+PyTorch 2.11's cu128 wheel requires CUDA bindings below 13. Select exactly
+one extra; do not combine packages from the two environments.
 
 ```bash
-python3 --version
-nvidia-smi
-nvcc --version
-uv --version
+# A fresh CUDA 13 environment (default):
+bash scripts/setup_environment.sh cu130
+source .venv-cu130/bin/activate
+# Or install the CUDA 12.8 route to a separate environment:
+bash scripts/setup_environment.sh cu128 /path/to/env-cu128
 ```
 
-Create the complete development and training environment from the checked-in
-lock file:
-
-```bash
-# CUDA 12.8:
-uv sync --frozen --extra cu128
-# Or, for CUDA 13.0:
-# uv sync --frozen --extra cu130
-source .venv/bin/activate
-```
-
-Select exactly one CUDA extra.
-
-`uv` builds `causal-conv1d` against the lockfile's exact PyTorch ABI, which is
-required by Qwen3.5's hybrid linear-attention layers. Activate `.venv` before
-running project commands. General dependencies use public PyPI; PyTorch
-CUDA builds use its official indexes. The `cu130` extra also selects the
-matching SGLang kernel from its official GitHub release, because its CUDA 13
-index contains stale checksums. Release checksums are recorded in `uv.lock`.
-A PyPI mirror can be selected locally with `UV_DEFAULT_INDEX` without
-changing project files.
+The setup script runs `uv sync --frozen` and `uv pip check`. Set `CUDA_HOME`
+to a toolkit matching the chosen CUDA major version before building extensions.
+On hosts using NVIDIA forward compatibility, add the installed compatible
+`libcuda` directory to `LD_LIBRARY_PATH` when launching processes; the script
+does not replace host drivers or shared environments. Verify imports, attention,
+collectives and forward/backward on the deployment hardware before benchmarking.
 
 FlashAttention is optional. Install the regular dependencies first so PyTorch
 is available while FlashAttention is built:
@@ -177,3 +168,53 @@ See [LICENSE](LICENSE).
   year={2026}
 }
 ```
+
+
+## Hidden capture pipeline
+
+`prepare_hidden_states.py` keeps the default synchronous `tar-v2` path.
+For SGLang capture and overlapped persistence, use:
+
+```bash
+torchrun --standalone --nproc-per-node=2 scripts/data/prepare_hidden_states.py \
+  --target-model-path /models/target --target-model-backend sglang \
+  --data-path /data/responses.jsonl --output-path /local/cache \
+  --tp-size 2 --batch-size 4 --target-layer-ids 1,16,31,46,61,63 \
+  --sglang-attention-backend fa3 \
+  --capture-mode async --cache-format tar-raw-v1 \
+  --target-shard-bytes 2147483648 --queue-depth 2 --writer-workers 2 \
+  --pending-bytes 8589934592 --profiling-output /local/capture_timings.json
+```
+
+`fa3` selects SGLang's FlashAttention 3 implementation; installing the separate
+`flash-attn` Python package is not required for that backend. Hybrid models keep
+their native linear-attention implementation alongside FA3 full-attention layers.
+
+`--capture-request-layout auto` sends true lengths for ordinary attention models.
+For hybrid linear-attention models it preserves padded request lengths, then
+packs only valid output tokens. This keeps the dense reference calculation:
+removing padding failed the strict per-layer numerical gate for Qwen3.8-27B.
+`--capture-request-layout packed` explicitly opts into true-length requests and
+must pass model-specific numerical checks before use. Padding preservation does
+not change the saved sequence lengths, dtype, tokens or masks.
+
+All TP ranks forward together; the TP owner alone copies and writes full-width
+hidden states. `tar-raw-v1` preserves BF16 values in versioned tensor byte slabs
+inside ordinary tar members. The manifest maps samples to member offsets across
+owner shards; training ranks need not match capture ranks. The offline reader
+supports both legacy tar and raw caches and exposes the same training fields.
+`--token-budget` and `--length-bucketing` are optional; zero budget and original
+order retain fixed batch sizing. `--resume` validates committed shards and only
+recaptures uncommitted samples. The final manifest is published after pending
+copies and durable commits complete. Checksums are calculated while writing;
+normal completion does not scan all hidden files again.
+
+Stage timings overlap and must not be added together. The benchmark end-to-end
+clock includes process startup, model load, preprocessing and final persistence.
+Download and archival clocks are reported separately.
+
+
+RoPE frequencies remain FP32 when draft weights are cast to BF16 and when FSDP
+casts buffers. This follows Transformers 5's loading behavior, so a fresh draft
+and its checkpoint reload use the same positional frequencies. Model weights and
+captured hidden tensors remain BF16.

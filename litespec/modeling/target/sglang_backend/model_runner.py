@@ -11,7 +11,12 @@ from sglang.srt.distributed import (
     set_mscclpp_all_reduce,
     set_torch_symm_mem_all_reduce,
 )
-from sglang.srt.layers.dp_attention import get_attention_tp_group
+
+try:
+    from sglang.srt.distributed import get_attn_tp_group as get_attention_tp_group
+except ImportError:
+    from sglang.srt.layers.dp_attention import get_attention_tp_group
+
 from sglang.srt.model_executor.model_runner import ModelRunner
 from sglang.srt.utils import (
     cpu_has_amx_support,
@@ -46,7 +51,7 @@ class SGLangRunner(ModelRunner):
     def init_torch_distributed(self):
         logger.info("Init torch distributed begin.")
 
-        # SGLang 0.5.9 JIT-compiles RoPE and norm kernels with the ninja
+        # SGLang JIT-compiles RoPE and norm kernels with the ninja
         # executable.  Invoking ``.venv/bin/torchrun`` directly does not
         # necessarily prepend that directory to PATH even though the Python
         # package is installed in the venv.
@@ -62,6 +67,10 @@ class SGLangRunner(ModelRunner):
                     "SGLang requires ninja for runtime kernel compilation; "
                     "install the project dependencies in the active environment"
                 ) from error
+
+        if hasattr(self, "ps"):
+            self._init_current_distributed()
+            return
 
         try:
             torch.get_device_module(self.device).set_device(self.gpu_id)
@@ -185,3 +194,34 @@ class SGLangRunner(ModelRunner):
             f"Init torch distributed ends. mem usage={(before_avail_memory - local_gpu_memory):.2f} GB"
         )
         return min_per_gpu_memory
+
+    def _init_current_distributed(self) -> None:
+        """Bind current SGLang runners to LiteSpec's existing target TP groups."""
+        torch.cuda.set_device(self.gpu_id)
+        set_custom_all_reduce(not self.server_args.disable_custom_all_reduce)
+        set_mscclpp_all_reduce(self.server_args.enable_mscclpp)
+        set_torch_symm_mem_all_reduce(self.server_args.enable_torch_symm_mem)
+        init_distributed_environment(
+            backend="nccl",
+            world_size=self.ps.tp_size,
+            rank=self.ps.tp_rank,
+            local_rank=self.gpu_id,
+        )
+        initialize_model_parallel(
+            tensor_model_parallel_size=self.ps.tp_size,
+            pipeline_model_parallel_size=self.ps.pp_size,
+            expert_model_parallel_size=self.ps.moe_ep_size,
+            attention_data_parallel_size=self.ps.attn_dp_size,
+            attention_context_model_parallel_size=self.ps.attn_cp_size,
+            moe_data_model_parallel_size=self.ps.moe_dp_size,
+        )
+        initialize_dp_attention(self.server_args, self.model_config)
+        self.tp_group = get_tp_group()
+        self.pp_group = get_pp_group()
+        self.attention_tp_group = get_attention_tp_group()
+        self.pre_model_load_memory = get_available_gpu_memory(
+            self.device,
+            self.gpu_id,
+            distributed=self.ps.tp_size > 1,
+            cpu_group=get_world_group().cpu_group,
+        )

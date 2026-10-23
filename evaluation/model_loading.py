@@ -9,6 +9,7 @@ import torch
 from loguru import logger
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from litespec.modeling.config_utils import load_hf_target_model
 from litespec.modeling.draft.dlite import DLiteDraftModel
 
 
@@ -116,7 +117,7 @@ def validate_decode_config(draft_model: DLiteDraftModel) -> None:
 
 def has_flash_attention() -> bool:
     try:
-        import flash_attn  # noqa: F401
+        from flash_attn import flash_attn_func, flash_attn_varlen_func  # noqa: F401
 
         return True
     except ImportError:
@@ -135,7 +136,7 @@ def load_dlite_benchmark_models(
     attn_impl = "flash_attention_2" if installed_flash_attn else "sdpa"
 
     target = (
-        AutoModelForCausalLM.from_pretrained(
+        load_hf_target_model(
             args.model_name_or_path,
             attn_implementation=attn_impl,
             dtype=torch.bfloat16,

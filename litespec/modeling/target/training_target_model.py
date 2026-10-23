@@ -1,13 +1,14 @@
+import inspect
 from abc import ABC, abstractmethod
+from array import array
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-from transformers import AutoModelForCausalLM
 
-from litespec.distributed import get_tp_group
+from litespec.data.capture_metrics import metrics
 
 
 @dataclass
@@ -19,6 +20,18 @@ class TargetTrainingOutput:
     input_ids: torch.Tensor  # [batch, seq_len]
     attention_mask: torch.Tensor  # [batch, seq_len]
     loss_mask: torch.Tensor  # [batch, seq_len]
+
+
+@dataclass
+class TargetCaptureOutput:
+    """Capture-only packed rows; CPU lengths avoid padding and scalar D2H."""
+
+    aux_hidden: torch.Tensor
+    final_hidden: torch.Tensor
+    layer_ids: list[int]
+    final_layer_id: int
+    lengths: list[int]
+    offsets: list[int]
 
 
 class TrainingTargetModel(ABC):
@@ -74,13 +87,32 @@ class SGLangTrainingTargetModel(TrainingTargetModel):
         from sglang.srt.configs.model_config import ModelConfig
         from sglang.srt.server_args import ServerArgs
 
+        from litespec.distributed import get_tp_group
+
         from .sglang_backend import (
             SGLangRunner,
             wrap_eagle3_logits_processors_in_module,
         )
 
         tp_size = dist.get_world_size(get_tp_group())
-        dtype_arg = torch_dtype if torch_dtype is not None else "auto"
+        dtype_arg = (
+            str(torch_dtype).removeprefix("torch.")
+            if torch_dtype is not None
+            else "auto"
+        )
+        if (
+            "enable_piecewise_cuda_graph"
+            not in inspect.signature(ServerArgs).parameters
+        ):
+            enable_piecewise = kwargs.pop("enable_piecewise_cuda_graph", False)
+            max_tokens = kwargs.pop("piecewise_cuda_graph_max_tokens", None)
+            tokens = kwargs.pop("piecewise_cuda_graph_tokens", None)
+            if enable_piecewise:
+                kwargs.update(
+                    cuda_graph_backend_prefill="tc_piecewise",
+                    cuda_graph_max_bs_prefill=max_tokens,
+                    cuda_graph_bs_prefill=tokens,
+                )
         server_args = ServerArgs(
             model_path=pretrained_model_name_or_path,
             trust_remote_code=trust_remote_code,
@@ -96,20 +128,44 @@ class SGLangTrainingTargetModel(TrainingTargetModel):
         moe_ep_rank = tp_rank // (server_args.tp_size // server_args.ep_size)
         model_config = ModelConfig.from_server_args(server_args)
 
-        model_runner = SGLangRunner(
+        runner_kwargs = dict(
             model_config=model_config,
             mem_fraction_static=server_args.mem_fraction_static,
             gpu_id=torch.cuda.current_device(),
-            tp_rank=dist.get_rank(get_tp_group()),
-            tp_size=server_args.tp_size,
-            moe_ep_rank=moe_ep_rank,
-            moe_ep_size=server_args.ep_size,
-            pp_rank=0,
-            pp_size=1,
             server_args=server_args,
             nccl_port=None,
             is_draft_worker=False,
         )
+        if "ps" in inspect.signature(SGLangRunner.__init__).parameters:
+            from sglang.srt.distributed.parallel_state_wrapper import ParallelState
+
+            runner_kwargs["ps"] = ParallelState.trivial(
+                tp_rank=tp_rank,
+                tp_size=tp_size,
+                attn_tp_rank=tp_rank,
+                attn_tp_size=tp_size,
+                moe_ep_rank=moe_ep_rank,
+                moe_ep_size=server_args.ep_size,
+                gpu_id=torch.cuda.current_device(),
+            )
+        else:
+            runner_kwargs.update(
+                tp_rank=tp_rank,
+                tp_size=tp_size,
+                moe_ep_rank=moe_ep_rank,
+                moe_ep_size=server_args.ep_size,
+                pp_rank=0,
+                pp_size=1,
+            )
+        with metrics.cpu("model_construct_load"):
+            model_runner = SGLangRunner(**runner_kwargs)
+        if hasattr(model_runner, "ps"):
+            with metrics.cpu("memory_pool_initialization"):
+                model_runner.alloc_memory_pool()
+            with metrics.cpu("attention_backend_initialization"):
+                model_runner.init_attention_backends()
+            with metrics.cpu("extension_compile_warmup"):
+                model_runner.init_cuda_graphs(capture_decode_cuda_graph=False)
         wrap_eagle3_logits_processors_in_module(
             model_runner.model, return_full_logits=True
         )
@@ -125,12 +181,21 @@ class SGLangTrainingTargetModel(TrainingTargetModel):
         APIs add a +1 offset to HF-style layer indices; the final layer is
         returned separately as ``last_hidden_states``.
         """
-        num_layers = getattr(self.model_runner.model_config, "num_hidden_layers", 36)
+        num_layers = int(self.model_runner.model_config.num_hidden_layers)
         if layer_ids is None or len(layer_ids) == 0:
             layer_ids = list(range(num_layers))
 
         super().set_capture_layers(layer_ids)
         model = self.model_runner.model
+        if hasattr(getattr(model, "model", None), "set_dflash_layers_to_capture"):
+            # Qwen3.5 captures the preceding layer at the next decoder input.
+            language_model = model.model
+            for layer in language_model.layers:
+                setattr(layer, "_is_layer_to_capture", False)
+            model.set_dflash_layers_to_capture(
+                [layer_id for layer_id in layer_ids if layer_id < num_layers - 1]
+            )
+            return
         if hasattr(model, "set_eagle3_layers_to_capture"):
             model.set_eagle3_layers_to_capture(layer_ids)
             return
@@ -316,7 +381,7 @@ class SGLangTrainingTargetModel(TrainingTargetModel):
         return tuple(layers)
 
     @torch.no_grad
-    def _extend(self, reqs, *, return_logits: bool):
+    def _extend(self, reqs, *, return_logits: bool, packed: bool = False):
         from sglang.srt.managers.schedule_batch import ScheduleBatch
         from sglang.srt.managers.scheduler import Scheduler
         from sglang.srt.mem_cache.cache_init_params import CacheInitParams
@@ -335,6 +400,13 @@ class SGLangTrainingTargetModel(TrainingTargetModel):
                 module.return_last_hidden_states = True
                 module.return_logits = return_logits
 
+        current_runtime = hasattr(self.model_runner, "ps")
+        if current_runtime:
+            for req in reqs:
+                req.origin_input_ids = array("q", req.origin_input_ids)
+                req.init_next_round_input()
+                req.set_extend_range(0, len(req.origin_input_ids))
+
         cache_params = CacheInitParams(
             disable=False,
             req_to_token_pool=self.model_runner.req_to_token_pool,
@@ -352,7 +424,8 @@ class SGLangTrainingTargetModel(TrainingTargetModel):
             enable_overlap=False,
             spec_algorithm=SpeculativeAlgorithm.NONE,
         )
-        batch.prepare_for_extend()
+        with metrics.cpu("request_prepare_extend"):
+            batch.prepare_for_extend()
 
         if require_mlp_sync(self.model_runner.server_args):
             Scheduler.prepare_mlp_sync_batch_raw(
@@ -371,12 +444,31 @@ class SGLangTrainingTargetModel(TrainingTargetModel):
                 offload_tags=set(),
             )
 
-        model_worker_batch = batch.get_model_worker_batch()
-        forward_batch = ForwardBatch.init_new(model_worker_batch, self.model_runner)
+        if current_runtime:
+            from sglang.srt.layers.dp_attention import set_is_extend_in_batch
+
+            with metrics.cpu("request_h2d_launch"), metrics.cuda("request_h2d_gpu"):
+                batch.input_ids = batch.prefill_input_ids_cpu.to(
+                    batch.device, non_blocking=True
+                )
+                batch.prefill_input_ids_cpu = None
+            forward_batch = ForwardBatch.init_new(
+                batch, self.model_runner, return_hidden_states_before_norm=False
+            )
+            set_is_extend_in_batch(True)
+        else:
+            model_worker_batch = batch.get_model_worker_batch()
+            forward_batch = ForwardBatch.init_new(model_worker_batch, self.model_runner)
         forward_batch.capture_hidden_mode = CaptureHiddenMode.FULL
 
-        runner_output = self.model_runner.forward(forward_batch)
+        with metrics.cpu("forward_launch_inclusive"), metrics.cuda("forward_gpu"):
+            runner_output = self.model_runner.forward(forward_batch)
         output = self._unpack_runner_output(runner_output)
+
+        if packed:
+            self.model_runner.req_to_token_pool.clear()
+            self.model_runner.token_to_kv_pool_allocator.clear()
+            return output.aux_hidden_states, output.last_hidden_states
 
         input_lens = [len(req.origin_input_ids) for req in reqs]
         last_hidden_list = None
@@ -409,6 +501,74 @@ class SGLangTrainingTargetModel(TrainingTargetModel):
         self.model_runner.token_to_kv_pool_allocator.clear()
 
         return hidden_states_list, last_hidden_list, logits_list
+
+    @torch.no_grad()
+    def generate_capture_data(
+        self, token_lists: list[list[int]], *, pad_token_id: int | None = None
+    ) -> TargetCaptureOutput:
+        """Forward true CPU lengths through native SGLang variable-length prefill."""
+        from sglang.srt.managers.schedule_batch import Req
+        from sglang.srt.sampling.sampling_params import SamplingParams
+
+        with metrics.cpu("request_construction"):
+            params = SamplingParams(temperature=0, max_new_tokens=1)
+            requests = []
+            maximum = max(map(len, token_lists))
+            for index, tokens in enumerate(token_lists):
+                if not tokens:
+                    raise ValueError("capture request contains no tokens")
+                request_tokens = (
+                    tokens
+                    if pad_token_id is None
+                    else tokens + [pad_token_id] * (maximum - len(tokens))
+                )
+                request = Req(
+                    rid=str(index),
+                    origin_input_text="",
+                    origin_input_ids=request_tokens,
+                    sampling_params=params,
+                )
+                request.fill_ids = request.origin_input_ids
+                request.extend_input_len = len(request_tokens)
+                requests.append(request)
+        aux, final = self._extend(requests, return_logits=False, packed=True)
+        if aux is None:
+            aux = final.new_empty((final.shape[0], 0))
+        if pad_token_id is not None:
+            # Hybrid recurrent kernels can be sensitive to physical sequence
+            # lengths. Preserve dense compute when packed prefill fails the
+            # numerical gate, while retaining CPU requests and packed storage.
+            aux = torch.cat(
+                [
+                    aux[index * maximum : index * maximum + len(tokens)]
+                    for index, tokens in enumerate(token_lists)
+                ]
+            )
+            final = torch.cat(
+                [
+                    final[index * maximum : index * maximum + len(tokens)]
+                    for index, tokens in enumerate(token_lists)
+                ]
+            )
+        hidden_size = int(self.model_runner.model_config.hidden_size)
+        final_id = int(self.model_runner.model_config.num_hidden_layers) - 1
+        layers = [index for index in self.capture_layer_ids if index != final_id]
+        if not layers:
+            # Some SGLang models mirror final hidden into aux when no auxiliary
+            # layer is selected; store the normalized output only once.
+            aux = aux[:, :0]
+        lengths = [len(tokens) for tokens in token_lists]
+        offsets = [0]
+        for length in lengths:
+            offsets.append(offsets[-1] + length)
+        if final.shape != (offsets[-1], hidden_size) or aux.shape != (
+            offsets[-1],
+            len(layers) * hidden_size,
+        ):
+            raise ValueError(
+                "packed capture has incomplete token or TP hidden dimensions"
+            )
+        return TargetCaptureOutput(aux, final, layers, final_id, lengths, offsets)
 
     @torch.no_grad()
     def generate_training_data(
@@ -540,9 +700,11 @@ class HFTrainingTargetModel(TrainingTargetModel):
         **kwargs,
     ) -> "HFTrainingTargetModel":
 
-        target_model = AutoModelForCausalLM.from_pretrained(
+        from litespec.modeling.config_utils import load_hf_target_model
+
+        target_model = load_hf_target_model(
             pretrained_model_name_or_path,
-            torch_dtype=torch_dtype,
+            dtype=torch_dtype,
             cache_dir=cache_dir,
             output_hidden_states=True,
             trust_remote_code=trust_remote_code,
@@ -566,7 +728,7 @@ class HFTrainingTargetModel(TrainingTargetModel):
         if not return_logits:
             base_model = getattr(self.model, "model", None)
             if isinstance(base_model, nn.Module) and base_model is not self.model:
-                forward_model = base_model
+                forward_model = getattr(base_model, "language_model", base_model)
         outputs = forward_model(
             input_ids=input_ids,
             attention_mask=attention_mask,

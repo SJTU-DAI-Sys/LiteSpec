@@ -15,6 +15,7 @@ import os
 import shutil
 import sys
 import tarfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
@@ -22,6 +23,13 @@ from typing import Any, Iterator
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from litespec.data.capture_metrics import (
+    metrics,
+    persist_tree,
+    profile_cpu,
+    tensor_digest,
+)
 
 SCHEMA_VERSION = 2
 SAMPLE_INDEX_VERSION = 1
@@ -87,6 +95,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     runtime.add_argument("--retry-failures", action="store_true")
     runtime.add_argument("--shard-size", type=int, default=512)
     runtime.add_argument("--compress", action="store_true")
+    runtime.add_argument("--profiling-output", type=Path)
+    runtime.add_argument("--capture-mode", choices=("sync", "async"), default="sync")
+    runtime.add_argument(
+        "--cache-format",
+        choices=("tar-v2", "tar-indexed-v2", "tar-raw-v1"),
+        default="tar-v2",
+    )
+    runtime.add_argument("--target-shard-bytes", type=int, default=2 * 1024**3)
+    runtime.add_argument("--queue-depth", type=int, default=2)
+    runtime.add_argument("--writer-workers", type=int, default=2)
+    runtime.add_argument("--pending-bytes", type=int, default=8 * 1024**3)
+    runtime.add_argument("--token-budget", type=int, default=0)
+    runtime.add_argument("--length-bucketing", action="store_true")
+    runtime.add_argument(
+        "--capture-request-layout",
+        choices=("auto", "packed", "padded"),
+        default="auto",
+        help="auto preserves dense compute for hybrid linear-attention models",
+    )
 
     sglang = parser.add_argument_group("sglang backend")
     sglang.add_argument("--sglang-attention-backend", default="flashinfer")
@@ -121,9 +148,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--max-retries cannot be negative")
     if args.retry_failures and not args.resume:
         parser.error("--retry-failures requires --resume")
+    if (
+        min(
+            args.target_shard_bytes,
+            args.queue_depth,
+            args.writer_workers,
+            args.pending_bytes,
+        )
+        <= 0
+        or args.token_budget < 0
+    ):
+        parser.error(
+            "pipeline resource limits must be positive; token budget may be zero"
+        )
+    if args.capture_mode == "async" or args.cache_format != "tar-v2":
+        if args.retry_failures:
+            parser.error(
+                "packed capture resumes committed shards with --resume; --retry-failures is unsupported"
+            )
+        if args.target_model_backend != "sglang" or args.compress:
+            parser.error("packed capture requires SGLang and uncompressed tar")
     return args
 
 
+@profile_cpu("index_publish")
 def atomic_write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
@@ -136,6 +184,7 @@ def atomic_write_json(path: Path, value: Any) -> None:
         temporary.unlink(missing_ok=True)
 
 
+@profile_cpu("index_publish")
 def atomic_write_text(path: Path, value: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
@@ -146,6 +195,7 @@ def atomic_write_text(path: Path, value: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
+@profile_cpu("sha_readback")
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -164,12 +214,25 @@ def input_fingerprint(path: Path) -> dict[str, Any]:
     }
 
 
+def tokenizer_fingerprint(tokenizer: Any) -> str:
+    backend = getattr(tokenizer, "backend_tokenizer", None)
+    vocabulary = (
+        backend.to_str()
+        if backend is not None
+        else json.dumps(tokenizer.get_vocab(), sort_keys=True)
+    )
+    return hashlib.sha256(
+        (vocabulary + repr(tokenizer.chat_template)).encode()
+    ).hexdigest()
+
+
 def tar_mode(compress: bool, read: bool = False) -> str:
     if read:
         return "r:*"
     return "w:gz" if compress else "w"
 
 
+@profile_cpu("tar_write")
 def add_bytes(archive: tarfile.TarFile, name: str, data: bytes) -> None:
     member_info = tarfile.TarInfo(name=name)
     member_info.size = len(data)
@@ -177,6 +240,7 @@ def add_bytes(archive: tarfile.TarFile, name: str, data: bytes) -> None:
     archive.addfile(member_info, io.BytesIO(data))
 
 
+@profile_cpu("metadata_validation")
 def read_shard_metadata(path: Path) -> dict[str, Any]:
     try:
         with tarfile.open(path, "r:*") as archive:
@@ -472,7 +536,10 @@ def valid_final_shards(
                 break
             if metadata.get("success_start") != expected_start:
                 break
-            if metadata["sample_count"] != shard_size:
+            count = metadata["sample_count"]
+            if count != shard_size and not (
+                metadata.get("final_partial") and 0 < count < shard_size
+            ):
                 break
         except Exception:
             break
@@ -481,6 +548,7 @@ def valid_final_shards(
     return result
 
 
+@profile_cpu("final_repack_inclusive")
 def finalize_staging(
     output_root: Path,
     input_identity: dict[str, Any],
@@ -646,6 +714,7 @@ def normalize_hidden_states(
     return result
 
 
+@profile_cpu("sample_payload_inclusive")
 def sample_payload(
     output: Any,
     batch_index: int,
@@ -673,8 +742,11 @@ def sample_payload(
         )
     sample_hidden = {}
     for layer_id, tensor in target_hidden_states.items():
-        value = tensor[batch_index, :length].detach().cpu().contiguous()
-        if not torch.isfinite(value).all():
+        with metrics.cpu("d2h_wait"), metrics.cuda("d2h_gpu"):
+            value = tensor[batch_index, :length].detach().cpu().contiguous()
+        with metrics.cpu("finite_check_cpu"):
+            finite = bool(torch.isfinite(value).all())
+        if not finite:
             raise HiddenStateError(f"layer {layer_id} contains NaN or Inf")
         if value.ndim != 2 or value.shape[0] != length:
             raise HiddenStateError(
@@ -692,10 +764,12 @@ def sample_payload(
         "final_hidden_state": final_hidden_state,
     }
     buffer = io.BytesIO()
-    torch.save(payload, buffer)
+    with metrics.cpu("torch_serialization"):
+        torch.save(payload, buffer)
     return buffer.getvalue()
 
 
+@profile_cpu("sample_index")
 def sample_index_metadata(output: Any, batch_index: int) -> dict[str, Any]:
     """Build an exact, compact loss-mask index without serializing sample tensors."""
     import torch
@@ -719,11 +793,16 @@ def sample_index_metadata(output: Any, batch_index: int) -> dict[str, Any]:
     ends = torch.nonzero(transitions == -1, as_tuple=False).reshape(-1).tolist()
     return {
         "sequence_length": length,
+        "token_digests": {
+            key: tensor_digest(getattr(output, key)[batch_index, :length])
+            for key in ("input_ids", "attention_mask", "loss_mask")
+        },
         "supervised_token_count": int(active.sum().item()),
         "loss_mask_runs": [[int(start), int(end)] for start, end in zip(starts, ends)],
     }
 
 
+@profile_cpu("batch_prepare")
 def collate_records(records: list[dict[str, Any]], pad_token_id: int):
     from torch.nn.utils.rnn import pad_sequence
 
@@ -754,6 +833,9 @@ def generate_with_retries(model, batch, max_retries: int):
             return model.generate_training_data(**batch, return_logits=False)
         except Exception as exc:
             last_error = exc
+    import traceback
+
+    traceback.print_exception(last_error)
     raise last_error
 
 
@@ -824,6 +906,27 @@ def run_generation(args: argparse.Namespace) -> dict[str, Any] | None:
                 raise HiddenStateError(
                     "existing cache has no lightweight sample index; regenerate it"
                 )
+            expected_fields = {
+                "target_model": args.target_model_path,
+                "target_backend": args.target_model_backend,
+                "max_length": args.max_length,
+                "chat_template": args.chat_template,
+                "cache_format": args.cache_format,
+            }
+            for key, expected in expected_fields.items():
+                actual = manifest.get(key, "tar-v2" if key == "cache_format" else None)
+                if actual != expected:
+                    raise HiddenStateError(
+                        f"resume configuration mismatch for {key}: {actual!r} != {expected!r}"
+                    )
+            if args.target_layer_ids:
+                expected_layers = args.target_layer_ids
+                if expected_layers != manifest.get("requested_hidden_layer_ids"):
+                    raise HiddenStateError("resume target layer selection changed")
+            if args.num_samples is not None and args.num_samples != manifest.get(
+                "successful_samples", 0
+            ) + manifest.get("failed_samples", 0):
+                raise HiddenStateError("resume sample limit changed")
             if args.resume and manifest.get("complete") and not args.retry_failures:
                 if dist.get_rank() == 0:
                     print(
@@ -850,6 +953,7 @@ def run_generation(args: argparse.Namespace) -> dict[str, Any] | None:
         for temp in output_root.glob("**/.*.tmp"):
             temp.unlink(missing_ok=True)
 
+        init_start = time.monotonic()
         tokenizer = AutoTokenizer.from_pretrained(
             args.target_model_path,
             cache_dir=args.model_download_dir,
@@ -864,9 +968,12 @@ def run_generation(args: argparse.Namespace) -> dict[str, Any] | None:
             cache_dir=args.model_download_dir,
             trust_remote_code=args.trust_remote_code,
         )
+        config = getattr(config, "text_config", config)
+        metrics.add("config_tokenizer_init", time.monotonic() - init_start)
         target_kwargs = {"trust_remote_code": args.trust_remote_code}
         if args.target_model_backend == "sglang":
             target_kwargs.update(SGLangBackendArgs.from_args(args).to_kwargs())
+        model_start = time.monotonic()
         target = get_training_target_model(
             args.target_model_path,
             backend=args.target_model_backend,
@@ -875,6 +982,7 @@ def run_generation(args: argparse.Namespace) -> dict[str, Any] | None:
             cache_dir=args.model_download_dir,
             **target_kwargs,
         )
+        metrics.add("model_load_compile", time.monotonic() - model_start)
         num_hidden_layers = int(config.num_hidden_layers)
         hidden_size = int(config.hidden_size)
         final_norm_layer_id = num_hidden_layers - 1
@@ -905,6 +1013,9 @@ def run_generation(args: argparse.Namespace) -> dict[str, Any] | None:
             json.dumps(
                 {
                     "identity": identity,
+                    "num_samples": args.num_samples,
+                    "tokenizer": tokenizer_fingerprint(tokenizer),
+                    "preprocessing_version": 2,
                     "max_length": args.max_length,
                     "chat_template": args.chat_template,
                     "model": args.target_model_path,
@@ -928,10 +1039,56 @@ def run_generation(args: argparse.Namespace) -> dict[str, Any] | None:
                 capture_errors=True,
             )
 
+        preprocess_start = time.monotonic()
         processed = build_processed_dataset() if dist.get_rank() == 0 else None
         dist.barrier()
         if processed is None:
             processed = build_processed_dataset()
+
+        metrics.add("preprocessing", time.monotonic() - preprocess_start)
+        if args.capture_mode == "async" or args.cache_format != "tar-v2":
+            from litespec.data.capture_pipeline import run_packed_capture
+
+            args.output_path = str(output_root)
+            if args.capture_request_layout == "auto":
+                hybrid = any(
+                    "linear" in layer for layer in getattr(config, "layer_types", [])
+                )
+                args.capture_request_layout = "padded" if hybrid else "packed"
+            args.capture_pad_token_id = (
+                tokenizer.pad_token_id
+                if args.capture_request_layout == "padded"
+                else None
+            )
+            manifest = run_packed_capture(
+                args,
+                target,
+                processed,
+                identity,
+                {
+                    "target_model": args.target_model_path,
+                    "target_backend": args.target_model_backend,
+                    "chat_template": args.chat_template,
+                    "max_length": args.max_length,
+                    "requested_hidden_layer_ids": requested_layer_ids,
+                    "stored_hidden_layer_ids": stored_layer_ids,
+                    "final_norm_layer_id": final_norm_layer_id,
+                    "num_hidden_layers": num_hidden_layers,
+                    "hidden_size": hidden_size,
+                    "hidden_dtype": str(target.model_runner.model_config.dtype),
+                    "compressed": False,
+                    "capture_request_layout": args.capture_request_layout,
+                },
+            )
+            if args.profiling_output:
+                metrics.save(
+                    args.profiling_output.with_name(
+                        args.profiling_output.stem
+                        + f".rank{dist.get_rank()}"
+                        + args.profiling_output.suffix
+                    )
+                )
+            return manifest
 
         dp_rank = dist.get_rank(get_dp_group())
         dp_size = dist.get_world_size(get_dp_group())
@@ -1016,9 +1173,11 @@ def run_generation(args: argparse.Namespace) -> dict[str, Any] | None:
             if not records:
                 return
             cpu_batch = collate_records(records, tokenizer.pad_token_id)
-            gpu_batch = {
-                key: value.cuda(non_blocking=True) for key, value in cpu_batch.items()
-            }
+            with metrics.cpu("h2d_launch"), metrics.cuda("h2d_gpu"):
+                gpu_batch = {
+                    key: value.cuda(non_blocking=True)
+                    for key, value in cpu_batch.items()
+                }
             try:
                 try:
                     batch_output = generate_with_retries(
@@ -1075,6 +1234,7 @@ def run_generation(args: argparse.Namespace) -> dict[str, Any] | None:
                 del gpu_batch
                 torch.cuda.empty_cache()
 
+        pipeline_start = time.monotonic()
         for source_index in range(cursor, end):
             item = processed[source_index]
             preprocessing_error = item.get("preprocessing_error", "")
@@ -1107,6 +1267,7 @@ def run_generation(args: argparse.Namespace) -> dict[str, Any] | None:
         elif is_tp_rank_0() and writer is not None:
             writer.abort()
 
+        metrics.add("capture_save_pipeline", time.monotonic() - pipeline_start)
         dist.barrier()
         if is_tp_rank_0():
             local_staging = discover_staging(output_root, identity, dp_rank)
@@ -1141,7 +1302,17 @@ def run_generation(args: argparse.Namespace) -> dict[str, Any] | None:
                 f"successful={manifest.get('successful_samples')} "
                 f"failed={manifest.get('failed_samples')}"
             )
+        if dist.get_rank() == 0:
+            persist_tree(output_root)
         dist.barrier()
+        if args.profiling_output:
+            metrics.save(
+                args.profiling_output.with_name(
+                    args.profiling_output.stem
+                    + f".rank{dist.get_rank()}"
+                    + args.profiling_output.suffix
+                )
+            )
         return manifest
     finally:
         destroy_distributed()
@@ -1151,6 +1322,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         run_generation(parse_args(argv))
     except Exception as exc:
+        import traceback
+
+        traceback.print_exc()
         print(f"error: {exc}", file=sys.stderr)
         return 1
     return 0

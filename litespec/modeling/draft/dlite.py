@@ -14,7 +14,6 @@ from transformers.models.qwen3.modeling_qwen3 import (
     Qwen3MLP,
     Qwen3PreTrainedModel,
     Qwen3RMSNorm,
-    Qwen3RotaryEmbedding,
     eager_attention_forward,
     rotate_half,
 )
@@ -22,7 +21,14 @@ from typing_extensions import Tuple, Unpack
 
 from .flex_attention import compile_friendly_flex_attention
 from .registry import method_config, register_draft
+from .rotary import FP32RotaryEmbedding as Qwen3RotaryEmbedding
 from .sampling import sample as sample_tokens
+from .target_cache import (
+    _begin_recurrent_cache_transaction,
+    _crop_target_cache,
+    _new_target_cache,
+    _restore_recurrent_cache_transaction,
+)
 
 SEQUENTIAL_HEAD_TYPES = ("rnn",)
 
@@ -319,68 +325,6 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
 DLITE_ARCHITECTURE_VERSIONS = ("dlite_v1", "dlite_v2")
 DLITE_ARCHITECTURE_VERSION = "dlite_v2"
 DLITE_MODEL_ROLES = ("swa_teacher", "student")
-
-
-def _new_target_cache(target: nn.Module) -> Cache:
-    """Create the cache shape required by both legacy and hybrid targets."""
-    try:
-        return DynamicCache(config=target.config)
-    except TypeError:
-        return DynamicCache()
-
-
-def _begin_recurrent_cache_transaction(
-    cache: Cache,
-) -> list[tuple[object, dict]] | None:
-    """Record recurrent states that cannot be cropped after block verification."""
-    if not hasattr(cache, "activate_past_recording"):
-        return None
-    snapshots: list[tuple[object, dict]] = []
-    for layer in getattr(cache, "layers", ()):
-        recurrent_states = getattr(layer, "recurrent_states", None)
-        if not isinstance(recurrent_states, dict):
-            continue
-        initialized = getattr(layer, "is_recurrent_states_initialized", {})
-        layer_snapshot = {
-            key: value.clone()
-            for key, value in recurrent_states.items()
-            if value is not None and bool(initialized.get(key, True))
-        }
-        if layer_snapshot:
-            snapshots.append((layer, layer_snapshot))
-    if not snapshots:
-        return None
-    cache.activate_past_recording()
-    return snapshots
-
-
-def _restore_recurrent_cache_transaction(
-    snapshots: list[tuple[object, dict]],
-) -> None:
-    for layer, layer_snapshot in snapshots:
-        recurrent_states = layer.recurrent_states
-        for key, saved in layer_snapshot.items():
-            current = recurrent_states.get(key)
-            if current is None:
-                recurrent_states[key] = saved
-            else:
-                current.copy_(saved)
-
-
-def _crop_target_cache(
-    cache: Cache,
-    *,
-    current_length: int,
-    tokens_to_remove: int,
-) -> None:
-    """Bridge absolute-size crop (Transformers 4.x) and relative crop (5.x)."""
-    tokens_to_remove = int(tokens_to_remove)
-    if tokens_to_remove < 0:
-        raise ValueError("tokens_to_remove must be non-negative")
-    if hasattr(cache, "is_croppable"):
-        cache.crop(-tokens_to_remove)
-    else:
-        cache.crop(int(current_length) - tokens_to_remove)
 
 
 def _infer_hs_embedding_offset(

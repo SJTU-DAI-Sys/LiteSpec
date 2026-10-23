@@ -14,7 +14,6 @@ from transformers.models.qwen3.modeling_qwen3 import (
     GradientCheckpointingLayer,
     Qwen3Config,
     Qwen3PreTrainedModel,
-    Qwen3RotaryEmbedding,
     eager_attention_forward,
     rotate_half,
 )
@@ -23,7 +22,14 @@ from typing_extensions import Tuple, Unpack
 from .dflash_kernels import DEFAULT_DFLASH_KERNELS, DFlashKernels
 from .flex_attention import compile_friendly_flex_attention
 from .registry import method_config, register_draft
+from .rotary import FP32RotaryEmbedding as Qwen3RotaryEmbedding
 from .sampling import _sample_probs, _sampling_probs, sample
+from .target_cache import (
+    _begin_recurrent_cache_transaction,
+    _crop_target_cache,
+    _new_target_cache,
+    _restore_recurrent_cache_transaction,
+)
 
 FULL_ATTENTION = "full_attention"
 SLIDING_ATTENTION = "sliding_attention"
@@ -889,7 +895,7 @@ class DFlashDraftModel(Qwen3PreTrainedModel):
         ).unsqueeze(0)
 
         past_key_values_target = (
-            DynamicCache() if target_cache is None else target_cache
+            _new_target_cache(target) if target_cache is None else target_cache
         )
         past_key_values_draft = DynamicCache()
 
@@ -931,7 +937,11 @@ class DFlashDraftModel(Qwen3PreTrainedModel):
                 use_cache=True,
                 is_causal=False,
             )
-            past_key_values_draft.crop(start)
+            _crop_target_cache(
+                past_key_values_draft,
+                current_length=past_key_values_draft.get_seq_length(),
+                tokens_to_remove=past_key_values_draft.get_seq_length() - start,
+            )
             draft_tokens, draft_probs, draft_indices = self._propose_draft_tokens(
                 target,
                 draft_hidden,
@@ -940,6 +950,9 @@ class DFlashDraftModel(Qwen3PreTrainedModel):
             )
             block_output_ids[:, 1:] = draft_tokens
 
+            recurrent_snapshot = _begin_recurrent_cache_transaction(
+                past_key_values_target
+            )
             output = target(
                 block_output_ids,
                 position_ids=block_position_ids,
@@ -978,8 +991,35 @@ class DFlashDraftModel(Qwen3PreTrainedModel):
                 :, : acceptance_length + 1
             ]
             output_ids[:, start + acceptance_length + 1] = bonus
-            start += acceptance_length + 1
-            past_key_values_target.crop(start)
+            kept_tokens = acceptance_length + 1
+            cache_length = start + block_size
+            if recurrent_snapshot is None:
+                _crop_target_cache(
+                    past_key_values_target,
+                    current_length=cache_length,
+                    tokens_to_remove=block_size - kept_tokens,
+                )
+            else:
+                _crop_target_cache(
+                    past_key_values_target,
+                    current_length=cache_length,
+                    tokens_to_remove=block_size,
+                )
+                _restore_recurrent_cache_transaction(recurrent_snapshot)
+                target(
+                    block_output_ids[:, :kept_tokens],
+                    position_ids=block_position_ids[:, :kept_tokens],
+                    past_key_values=past_key_values_target,
+                    use_cache=True,
+                    logits_to_keep=1,
+                    output_hidden_states=False,
+                )
+                _crop_target_cache(
+                    past_key_values_target,
+                    current_length=start + kept_tokens,
+                    tokens_to_remove=0,
+                )
+            start += kept_tokens
             target_hidden = extract_context_feature(
                 output.hidden_states, self.target_layer_ids
             )[:, : acceptance_length + 1, :]

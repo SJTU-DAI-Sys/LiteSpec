@@ -240,3 +240,7 @@ inductor-cache/
 triton-cache/
 *.nsys-rep
 *.ncu-rep
+
+# Generated local capture benchmark evidence
+/tests/capture_4k_20261023/
+._*

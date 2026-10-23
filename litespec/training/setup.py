@@ -150,7 +150,9 @@ def build_hidden_cache_dataloader(args, tokenizer, *, required_layer_ids: set[in
     target_config = load_text_model_config(
         args.target_model_path, trust_remote_code=args.trust_remote_code
     )
-    verify = not dist.is_initialized() or dist.get_rank() == 0
+    verify = bool(getattr(args, "verify_hidden_cache_checksums", False)) and (
+        not dist.is_initialized() or dist.get_rank() == 0
+    )
     manifest = load_hidden_cache_manifest(
         args.train_hidden_states_path,
         target_model=args.target_model_path,
@@ -498,7 +500,7 @@ def wrap_training_model(draft_online, components, *, process_group=None):
         ignored_modules=[components.lm_head, components.embed_tokens],
         use_orig_params=True,
         mixed_precision=MixedPrecision(
-            param_dtype=torch.bfloat16, buffer_dtype=torch.bfloat16
+            param_dtype=torch.bfloat16, buffer_dtype=torch.float32
         ),
         sharding_strategy=ShardingStrategy.SHARD_GRAD_OP,
     )

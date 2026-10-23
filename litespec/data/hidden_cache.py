@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
 import random
@@ -105,6 +106,7 @@ def load_hidden_cache_manifest(
         raise HiddenCacheError("regen_full manifest contains no shards")
     expected_start = 0
     counted = 0
+    observed_indices: set[int] = set()
     for shard in shards:
         if not isinstance(shard, dict):
             raise HiddenCacheError("regen_full shard entry must be an object")
@@ -121,6 +123,33 @@ def load_hidden_cache_manifest(
             raise HiddenCacheError(
                 f"regen_full shard source index count is invalid: {path}"
             )
+        if (
+            any(
+                not isinstance(index, int) or index < 0 or index in observed_indices
+                for index in source_indices
+            )
+            or len(set(source_indices)) != count
+        ):
+            raise HiddenCacheError(f"duplicate or invalid source index: {path}")
+        observed_indices.update(source_indices)
+        members = shard.get("members")
+        if members is not None:
+            if not isinstance(members, list) or len(members) != count:
+                raise HiddenCacheError(f"direct member count mismatch: {path}")
+            previous_end = 0
+            size = path.stat().st_size
+            for member in members:
+                offset, length = int(member.get("offset", -1)), int(
+                    member.get("size", -1)
+                )
+                if (
+                    offset < previous_end + 512
+                    or offset % 512
+                    or length <= 0
+                    or offset + length > size
+                ):
+                    raise HiddenCacheError(f"invalid direct tar member extent: {path}")
+                previous_end = offset + length
         sample_metadata = shard.get("sample_metadata", [])
         if len(sample_metadata) != count:
             raise HiddenCacheError(
@@ -230,11 +259,22 @@ class RegenFullDataset(Dataset):
                         sample_metadata,
                     )
                 )
+        self._direct_entries: dict[int, dict[str, Any]] = {}
+        position = 0
+        for shard in manifest["shards"]:
+            if "members" in shard:
+                if len(shard["members"]) != shard["sample_count"]:
+                    raise HiddenCacheError("direct shard member count mismatch")
+                for offset, member in enumerate(shard["members"]):
+                    self._direct_entries[position + offset] = member
+            position += shard["sample_count"]
+        self._binary: OrderedDict[Path, Any] = OrderedDict()
         self._archives: OrderedDict[Path, tarfile.TarFile] = OrderedDict()
 
     def __getstate__(self):
         state = dict(self.__dict__)
         state["_archives"] = OrderedDict()
+        state["_binary"] = OrderedDict()
         return state
 
     def close(self) -> None:
@@ -242,6 +282,10 @@ class RegenFullDataset(Dataset):
         for archive in archives.values():
             archive.close()
         archives.clear()
+        binary = getattr(self, "_binary", {})
+        for handle in binary.values():
+            handle.close()
+        binary.clear()
 
     def __del__(self):
         self.close()
@@ -251,6 +295,47 @@ class RegenFullDataset(Dataset):
 
     def _load_payload(self, index: int) -> dict[str, Any]:
         path, member_name, source_index, _ = self.entries[index]
+        if index in self._direct_entries:
+            entry = self._direct_entries[index]
+            handle = self._binary.get(path)
+            if handle is None:
+                if len(self._binary) >= self.max_open_archives:
+                    _, stale = self._binary.popitem(last=False)
+                    stale.close()
+                handle = path.open("rb")
+                self._binary[path] = handle
+            self._binary.move_to_end(path)
+            offset, size = int(entry["offset"]), int(entry["size"])
+            if offset < 512 or size <= 0 or offset + size > path.stat().st_size:
+                raise HiddenCacheError("invalid direct tar member extent")
+            handle.seek(offset)
+            data = bytearray(size)
+            view = memoryview(data)
+            position = 0
+            while position < size:
+                count = handle.readinto(view[position:])
+                if not count:
+                    raise HiddenCacheError("truncated direct tar member")
+                position += count
+            if self.manifest.get("cache_format") == "tar-raw-v1":
+                from .hidden_raw import decode_raw_sample
+
+                payload = decode_raw_sample(data)
+            else:
+                payload = torch.load(
+                    io.BytesIO(data), map_location="cpu", weights_only=True
+                )
+        else:
+            payload = self._load_legacy(path, member_name)
+        if not isinstance(payload, dict):
+            raise HiddenCacheError(f"sample {member_name} is not an object")
+        if payload.get("schema_version") != REGEN_FULL_SCHEMA_VERSION:
+            raise HiddenCacheError(f"sample {member_name} has an unsupported schema")
+        if int(payload.get("sample_index", -1)) != source_index:
+            raise HiddenCacheError(f"sample index mismatch in {member_name}")
+        return payload
+
+    def _load_legacy(self, path: Path, member_name: str) -> dict[str, Any]:
         archive = self._archives.get(path)
         if archive is None:
             if len(self._archives) >= self.max_open_archives:
@@ -272,12 +357,6 @@ class RegenFullDataset(Dataset):
             raise HiddenCacheError(
                 f"cannot load {member_name} from {path}: {exc}"
             ) from exc
-        if not isinstance(payload, dict):
-            raise HiddenCacheError(f"sample {member_name} is not an object")
-        if payload.get("schema_version") != REGEN_FULL_SCHEMA_VERSION:
-            raise HiddenCacheError(f"sample {member_name} has an unsupported schema")
-        if int(payload.get("sample_index", -1)) != source_index:
-            raise HiddenCacheError(f"sample index mismatch in {member_name}")
         return payload
 
     def eligible_indices(self, *, block_size: int) -> list[int]:

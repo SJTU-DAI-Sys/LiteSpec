@@ -5,7 +5,6 @@ from typing import Optional
 
 import torch
 import torch.distributed as dist
-from yunchang.globals import PROCESS_GROUP, set_seq_parallel_pg
 
 _DEVICE_MESH = None
 _TP_DEVICE_MESH = None
@@ -437,6 +436,8 @@ def init_distributed(
         timeout(int): Timeout for collective communication in minutes
         tp_size(int): The degree of tensor parallelism
     """
+    from yunchang.globals import PROCESS_GROUP, set_seq_parallel_pg
+
     dist.init_process_group(backend="nccl", timeout=timedelta(minutes=timeout))
     local_rank = dist.get_rank() % torch.cuda.device_count()
     torch.cuda.set_device(local_rank)
@@ -505,9 +506,10 @@ def destroy_distributed():
         seen.add(group)
         try:
             dist.destroy_process_group(group)
-        except (AssertionError, RuntimeError):
+        except (AssertionError, RuntimeError, ValueError):
             pass
-    dist.destroy_process_group()
+    if dist.is_initialized():
+        dist.destroy_process_group()
 
 
 def is_tp_rank_0():

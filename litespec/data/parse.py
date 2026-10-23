@@ -160,6 +160,10 @@ class GeneralParser(Parser):
             add_special_tokens=False,
         )
         input_ids = encoding.input_ids[0]
+        if input_ids.numel() == 0:
+            raise ValueError(
+                "tokenizer returned no tokens; verify tokenizer files and input"
+            )
         loss_mask = torch.zeros(len(input_ids), dtype=torch.long)
 
         matches = list(re.finditer(self.assistant_pattern, conversation, re.DOTALL))

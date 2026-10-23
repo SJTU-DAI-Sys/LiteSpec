@@ -26,8 +26,6 @@ import torch.distributed as dist
 from datasets import Dataset
 from torch.utils.data import DataLoader, DistributedSampler
 
-from litespec.distributed import get_draft_sp_group, get_sp_ulysses_group
-
 
 class DataCollatorWithPadding:
     """
@@ -35,6 +33,8 @@ class DataCollatorWithPadding:
     """
 
     def __init__(self, pad_to_length: Optional[int] = None):
+        from litespec.distributed import get_draft_sp_group, get_sp_ulysses_group
+
         self.sp_degree = torch.distributed.get_world_size(get_draft_sp_group())
         self.ulysses_degree = torch.distributed.get_world_size(get_sp_ulysses_group())
         self.pad_to_length = pad_to_length

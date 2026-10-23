@@ -131,3 +131,32 @@ def load_text_model_config(
         trust_remote_code=trust_remote_code,
     )
     return getattr(config, "text_config", config)
+
+
+def load_hf_target_model(pretrained_model_name_or_path: str, **kwargs: Any):
+    """Load the native target architecture, retaining hybrid/multimodal text layers."""
+    from transformers import AutoModelForCausalLM, AutoModelForImageTextToText
+
+    config = kwargs.pop("config", None)
+    if config is None:
+        config = AutoConfig.from_pretrained(
+            pretrained_model_name_or_path,
+            **{
+                key: kwargs[key]
+                for key in (
+                    "cache_dir",
+                    "trust_remote_code",
+                    "revision",
+                    "local_files_only",
+                )
+                if key in kwargs
+            },
+        )
+    model_class = (
+        AutoModelForImageTextToText
+        if hasattr(config, "text_config")
+        else AutoModelForCausalLM
+    )
+    return model_class.from_pretrained(
+        pretrained_model_name_or_path, config=config, **kwargs
+    )

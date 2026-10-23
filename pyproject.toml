@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 dependencies = [
     "accelerate",
     "causal-conv1d==1.7.0",
-    "datasets",
+    "datasets>=5.1.0,<6",
     "flash-linear-attention[conv1d]==0.5.2",
     "huggingface-hub",
     "loguru",
@@ -27,11 +27,11 @@ dependencies = [
     "qwen-vl-utils==0.0.11",
     "rich",
     "safetensors",
-    "sglang==0.5.9",
-    "torch==2.9.1",
-    "torchaudio==2.9.1",
-    "torchvision==0.24.1",
-    "transformers==4.57.1",
+    "sglang>=0.5.10,<=0.5.16",
+    "torch>=2.9.1,<=2.11.0",
+    "torchaudio>=2.9.1,<=2.11.0",
+    "torchvision>=0.24.1,<=0.26.0",
+    "transformers>=5.3.0,<=5.12.1",
     "tqdm",
     "typing-extensions",
     "wandb",
@@ -44,11 +44,13 @@ Issues = "https://github.com/SJTU-DAI-Sys/LiteSpec/issues"
 
 [project.optional-dependencies]
 fa = ["flash-attn"]
-cu128 = ["torch==2.9.1", "torchaudio==2.9.1", "torchvision==0.24.1"]
-cu130 = ["torch==2.9.1", "torchaudio==2.9.1", "torchvision==0.24.1", "sgl-kernel==0.3.21"]
+cu128 = ["torch==2.9.1", "torchaudio==2.9.1", "torchvision==0.24.1", "sglang==0.5.10", "transformers==5.3.0"]
+cu130 = ["torch==2.11.0", "torchaudio==2.11.0", "torchvision==0.26.0", "sglang==0.5.16", "transformers==5.12.1"]
 
 [dependency-groups]
 dev = [
+    "black==24.10.0",
+    "isort==5.13.2",
     "build",
     "pre-commit",
     "pytest",
@@ -62,6 +64,7 @@ version = {file = "version.txt"}
 
 [tool.uv]
 preview = true
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 conflicts = [[{ extra = "cu128" }, { extra = "cu130" }]]
 
 [[tool.uv.index]]
@@ -84,11 +87,6 @@ url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [tool.uv.sources]
-# The upstream CUDA 13 index has stale hashes; use verified release assets.
-sgl-kernel = [
-    { url = "https://github.com/sgl-project/whl/releases/download/v0.3.21/sgl_kernel-0.3.21%2Bcu130-cp310-abi3-manylinux2014_x86_64.whl", extra = "cu130", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
-    { url = "https://github.com/sgl-project/whl/releases/download/v0.3.21/sgl_kernel-0.3.21%2Bcu130-cp310-abi3-manylinux2014_aarch64.whl", extra = "cu130", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
-]
 torch = [{ index = "pytorch-cu128", extra = "cu128" }, { index = "pytorch-cu130", extra = "cu130" }]
 torchaudio = [{ index = "pytorch-cu128", extra = "cu128" }, { index = "pytorch-cu130", extra = "cu130" }]
 torchvision = [{ index = "pytorch-cu128", extra = "cu128" }, { index = "pytorch-cu130", extra = "cu130" }]

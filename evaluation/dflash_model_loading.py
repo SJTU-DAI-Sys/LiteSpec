@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
 
+from litespec.modeling.config_utils import load_hf_target_model
 from litespec.modeling.draft.registry import method_config, resolve_draft
 
 
@@ -16,13 +17,13 @@ def load_dflash_benchmark_models(args, device):
         raise ValueError(f"{args.algorithm} benchmark cannot load {architecture}")
     method_config(config)
     try:
-        import flash_attn  # noqa: F401
+        from flash_attn import flash_attn_func, flash_attn_varlen_func  # noqa: F401
 
         attn_impl = "flash_attention_2"
     except ImportError:
         attn_impl = "sdpa"
     target = (
-        AutoModelForCausalLM.from_pretrained(
+        load_hf_target_model(
             args.model_name_or_path,
             attn_implementation=attn_impl,
             dtype=torch.bfloat16,

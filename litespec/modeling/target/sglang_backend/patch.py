@@ -1,3 +1,4 @@
+import inspect
 import logging
 import os
 from typing import Optional
@@ -6,11 +7,12 @@ import sglang.srt.distributed.parallel_state as parallel_state
 import torch
 import torch.distributed as dist
 from sglang.srt.configs.model_config import ModelConfig
-from sglang.srt.distributed import init_model_parallel_group
+from sglang.srt.distributed import (
+    init_model_parallel_group as _native_init_model_parallel_group,
+)
 from sglang.srt.distributed.parallel_state import GroupCoordinator
 from sglang.srt.layers.dp_attention import (
     _DpGatheredBufferWrapper,
-    compute_dp_attention_local_info,
     compute_dp_attention_world_info,
 )
 from sglang.srt.server_args import ServerArgs
@@ -20,6 +22,15 @@ from litespec.distributed import get_disaggregated_topology
 from litespec.distributed import get_tp_group as get_litespec_tp_group
 
 logger = logging.getLogger(__name__)
+
+
+def init_model_parallel_group(*args, pynccl_use_current_stream=False, **kwargs):
+    if (
+        "pynccl_use_current_stream"
+        in inspect.signature(_native_init_model_parallel_group).parameters
+    ):
+        kwargs["pynccl_use_current_stream"] = pynccl_use_current_stream
+    return _native_init_model_parallel_group(*args, **kwargs)
 
 
 def _coordinator_from_existing_group(
@@ -202,6 +213,8 @@ def initialize_model_parallel(
         parallel_state._MOE_DP = parallel_state._PP
         if duplicate_tp_group:
             parallel_state._PDMUX_PREFILL_TP_GROUP = world
+        if hasattr(parallel_state, "_DCP"):
+            parallel_state._DCP = parallel_state._PP
         return
 
     # Get world size and rank. Ensure some consistencies.
@@ -429,6 +442,9 @@ def initialize_model_parallel(
             group_name="moe_dp",
         )
 
+    if hasattr(parallel_state, "_DCP"):
+        parallel_state._DCP = parallel_state._PP
+
 
 def initialize_dp_attention(
     server_args: ServerArgs,
@@ -442,6 +458,12 @@ def initialize_dp_attention(
     - Removed _ATTN_TP_GROUP creation (now handled by initialize_model_parallel in sglang 0.5.9)
     """
     import sglang.srt.layers.dp_attention as dp_attention
+
+    if hasattr(server_args, "dcp_size"):
+        # New runtimes own DP metadata in RuntimeContext instead of module globals.
+        dp_attention.initialize_dp_attention(server_args, model_config)
+        return
+    from sglang.srt.layers.dp_attention import compute_dp_attention_local_info
 
     enable_dp_attention = server_args.enable_dp_attention
     tp_size = server_args.tp_size
