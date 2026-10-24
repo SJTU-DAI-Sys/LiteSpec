@@ -1,4 +1,6 @@
 # coding=utf-8
+# Modified for LiteSpec: adapt target execution and hidden-state access to LiteSpec.
+# Upstream attribution and license terms: THIRD_PARTY_NOTICES.md.
 # Copyright 2025 The Qwen2 and HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

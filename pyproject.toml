@@ -9,7 +9,7 @@ description = "Training and evaluation toolkit for DLite and DFlash-family specu
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["licenses/*.txt"]
 dependencies = [
     "accelerate",
     "causal-conv1d==1.7.0",

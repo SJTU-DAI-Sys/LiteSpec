@@ -1,0 +1,14 @@
+{
+  "prompt": {
+    "path": "conversation",
+    "kind": "messages",
+    "role_path": "role",
+    "content_path": "content"
+  },
+  "source": {
+    "default": "allenai/WildChat-4.8M"
+  },
+  "category": {
+    "path": "language"
+  }
+}

@@ -10,7 +10,6 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from .capture_metrics import metrics
 from .hidden_raw import RawPayload
 
 BUFFER_SIZE = 4 * 1024 * 1024
@@ -24,15 +23,26 @@ def fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def tensor_digest(value: Any) -> str:
+    """Record exact token/mask identity without reading hidden tensors again."""
+    import torch
+
+    value = value.detach().cpu().contiguous()
+    digest = hashlib.sha256()
+    digest.update(str(value.dtype).encode())
+    digest.update(str(tuple(value.shape)).encode())
+    digest.update(memoryview(value.reshape(-1).view(torch.uint8).numpy()))
+    return digest.hexdigest()
+
+
 def publish_json(path: Path, value: Any) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
-    with metrics.cpu("index_publish"):
-        with temporary.open("w") as handle:
-            json.dump(value, handle, separators=(",", ":"))
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        fsync_directory(path.parent)
+    with temporary.open("w") as handle:
+        json.dump(value, handle, separators=(",", ":"))
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+    fsync_directory(path.parent)
 
 
 class StreamingTar:
@@ -46,12 +56,9 @@ class StreamingTar:
     def write(self, data: bytes | memoryview) -> None:
         for start in range(0, len(data), BUFFER_SIZE):
             chunk = data[start : start + BUFFER_SIZE]
-            with metrics.cpu("tar_write"):
-                self.handle.write(chunk)
-            with metrics.cpu("sha_stream"):
-                self.digest.update(chunk)
+            self.handle.write(chunk)
+            self.digest.update(chunk)
             self.size += len(chunk)
-        metrics.count("application_written_bytes", len(data))
 
     def member(self, name: str, payload: RawPayload) -> dict[str, Any]:
         header = tarfile.TarInfo(name)
@@ -69,13 +76,11 @@ class StreamingTar:
 
     def commit(self, metadata: dict[str, Any]) -> dict[str, Any]:
         try:
-            with metrics.cpu("flush_fsync"):
-                self.handle.flush()
-                os.fsync(self.handle.fileno())
-                self.handle.close()
-            with metrics.cpu("atomic_publish"):
-                os.replace(self.temporary, self.final)
-                fsync_directory(self.final.parent)
+            self.handle.flush()
+            os.fsync(self.handle.fileno())
+            self.handle.close()
+            os.replace(self.temporary, self.final)
+            fsync_directory(self.final.parent)
             result = {
                 **metadata,
                 "sha256": self.digest.hexdigest(),
@@ -102,13 +107,12 @@ class DirectTarWriter:
         identity: dict[str, Any],
         target_bytes: int,
         resume: bool = False,
-        raw: bool = True,
     ) -> None:
         self.root = root
         self.directory = root / "shards" / f"rank_{rank:05d}"
         self.directory.mkdir(parents=True, exist_ok=True)
         self.rank = rank
-        self.extension = "bin" if raw else "pt"
+        self.extension = "bin"
         self.identity = identity
         self.target_bytes = target_bytes
         self.executor = ThreadPoolExecutor(
@@ -167,9 +171,8 @@ class DirectTarWriter:
     def rotate(self) -> None:
         if self.writer is None:
             return
-        with metrics.cpu("commit_backpressure"):
-            while len(self.pending) >= 2:
-                self.committed.append(self.pending.pop(0).result())
+        while len(self.pending) >= 2:
+            self.committed.append(self.pending.pop(0).result())
         self.writer.seal()
         metadata = {
             "path": str(self.writer.final.relative_to(self.root)),
@@ -189,9 +192,8 @@ class DirectTarWriter:
     def close(self) -> list[dict[str, Any]]:
         try:
             self.rotate()
-            with metrics.cpu("commit_final_drain"):
-                for pending in self.pending:
-                    self.committed.append(pending.result())
+            for pending in self.pending:
+                self.committed.append(pending.result())
             self.pending.clear()
             return self.committed
         finally:

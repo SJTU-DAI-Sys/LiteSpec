@@ -1,0 +1,17 @@
+{
+  "passed": true,
+  "license_file_count": 9,
+  "archives": {
+    "litespec-0.2.0.tar.gz": {
+      "all_license_files_match": true,
+      "tests_excluded": true
+    },
+    "litespec-0.2.0-py3-none-any.whl": {
+      "all_license_files_match": true,
+      "metadata": "Apache-2.0",
+      "tests_excluded": true
+    }
+  },
+  "specforge_mit_original_preserved": true,
+  "python_ast_unchanged": true
+}

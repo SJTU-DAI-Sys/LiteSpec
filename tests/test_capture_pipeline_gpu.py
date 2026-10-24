@@ -21,8 +21,6 @@ def options():
         target_shard_bytes=8 * 1024**2,
         resume=False,
         writer_workers=2,
-        cache_format="tar-raw-v1",
-        capture_mode="async",
     )
 
 
@@ -74,7 +72,7 @@ def test_event_lifetime_backpressure_and_reuse(tmp_path, monkeypatch):
     assert not waiter.is_alive()
     pipeline.slots.release()
     shards = pipeline.close()
-    assert pipeline.pool.peak <= options().pending_bytes
+    assert pipeline.pool.allocated <= options().pending_bytes
     block = pipeline.pool.free[0]
     pointer = block.aux.data_ptr()
     assert pipeline.pool.acquire(16, 24, 12, torch.bfloat16).aux.data_ptr() == pointer
@@ -107,10 +105,10 @@ def test_pinned_byte_credit_waits_for_release():
     )
     thread.start()
     time.sleep(0.1)
-    assert thread.is_alive() and pool.peak <= required
+    assert thread.is_alive() and pool.allocated <= required
     pool.release(first)
     thread.join(5)
-    assert not thread.is_alive() and len(result) == 1 and pool.peak <= required
+    assert not thread.is_alive() and len(result) == 1 and pool.allocated <= required
 
 
 def test_failed_serializer_joins_other_readers_before_buffer_release(

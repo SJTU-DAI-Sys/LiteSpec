@@ -1,0 +1,67 @@
+algorithm: dflash
+
+launcher:
+  target_model: Qwen/Qwen3-4B
+  # Online mode. Comment this and enable train_hidden_states for offline mode.
+  train_data: /path/to/train.jsonl
+  # train_hidden_states: /path/to/regen_full_cache
+  output_dir: ./outputs/dflash_qwen3_4b
+  nnodes: 1
+  node_rank: 0
+  nproc_per_node: 8
+  master_addr: 127.0.0.1
+  master_port: 29500
+
+arguments:
+  target_model_backend: sglang
+  sglang_attention_backend: fa3
+  sglang_mem_fraction_static: 0.30
+  sglang_ep_size: 1
+  attention_backend: flex_attention
+  flex_attention_backend: TRITON
+  chat_template: qwen
+  max_length: 4096
+  batch_size: 1
+  accumulation_steps: 1
+  tp_size: 1
+  shard_draft_by_tp: false
+  dist_timeout: 1200
+  block_size: 16
+  num_draft_layers: 5
+  num_anchors: 512
+  attention_mode: gqa
+  num_epochs: 6
+  learning_rate: 0.0006
+  # AdamW-only weight decay; ignored when use_muon is true.
+  weight_decay: 0.0
+  warmup_ratio: 0.04
+  max_grad_norm: 1.0
+  # Optional FSDP1 Muon + AdamW; these settings are ignored when disabled.
+  use_muon: false
+  muon_lr: 0.02
+  muon_momentum: 0.95
+  muon_weight_decay: 0.0
+  # Each batch handles up to world_size * this many same-shape matrices.
+  muon_matrices_per_rank: 1
+  muon_adamw_lr: 0.0004
+  muon_adamw_weight_decay: 0.0
+  seed: 42
+  objective_chunk_blocks: 512
+  cache_dir: ./cache/train
+  build_dataset_num_proc: 32
+  dataloader_num_workers: 8
+  log_interval: 10
+  save_interval: 500
+  report_to: wandb
+  wandb_project: spec-decoding
+  wandb_name: dflash_lite_spec
+  # D-T disaggregate settings
+  # false: every rank runs target + draft; true: split target and draft ranks.
+  disaggregate: false
+  target_ranks_per_node: 4
+  draft_ranks_per_node: 4
+  target_tp_size: 1
+  node_batch_size: 4
+  draft_micro_batch_size: 1
+  pipeline_depth: 2
+  profile: false

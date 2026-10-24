@@ -1,5 +1,3 @@
-# coding=utf-8
-# Licensed under the Apache License, Version 2.0 (the "License").
 """Reusable chunked reductions for memory-bounded training objectives."""
 
 from __future__ import annotations

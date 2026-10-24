@@ -91,23 +91,22 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
 .venv/bin/torchrun --nproc-per-node=8 \
 scripts/data/prepare_hidden_states.py \
   --target-model-path /path/to/Qwen3-4B \
-  --target-model-backend sglang \
   --data-path ./cache/data/regen_token_only/wildchat_chinese_turns_le2_qwen3_4b_temp0.7_topk15_max4096.jsonl \
   --output-path ./cache/data/regen_full/wildchat_chinese_qwen3_4b \
   --target-layer-ids 0,8,16,24,31 \
   --max-length 4096 \
   --tp-size 1 \
   --sglang-ep-size 1 \
-  --batch-size 1 \
-  --shard-size 512
+  --batch-size 1
 
 ```
 
 Each saved sample contains `input_ids`, `attention_mask`, `loss_mask`, and the
-selected hidden-state layers. A full shard contains 512 successful samples;
-failed samples are logged and later successful samples fill their places. Use
-`--resume` after an interrupted run. This is the `regen_full` save mode, whose
-default root is `./cache/data/regen_full/`; `--output-path` overrides it.
+selected hidden-state layers. New captures write asynchronous `tar-raw-v1` shards
+and rotate them at `--target-shard-mib` (2048 MiB by default). Use `--resume`
+after an interrupted run. Training can still read an existing `tar-v2` cache.
+This is the `regen_full` save mode, whose default root is
+`./cache/data/regen_full/`; `--output-path` overrides it.
 
 `regen_full` schema v2 always stores the target model's final-norm hidden state
 as `final_hidden_state`, even when `--target-layer-ids` selects only intermediate

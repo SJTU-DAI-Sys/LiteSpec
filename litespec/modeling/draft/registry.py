@@ -1,11 +1,3 @@
-# coding=utf-8
-# Copyright 2024 The SpecForge team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
 """Draft-architecture registry: the extension point for new draft model classes.
 
 A draft *architecture* (the model class) is a separate axis from an immutable

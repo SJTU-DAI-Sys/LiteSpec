@@ -1,0 +1,92 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "litespec"
+dynamic = ["version"]
+description = "Training and evaluation toolkit for DLite and DFlash-family speculative decoding."
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/*.txt"]
+dependencies = [
+    "accelerate",
+    "causal-conv1d==1.7.0",
+    "datasets>=5.1.0,<6",
+    "flash-linear-attention[conv1d]==0.5.2",
+    "huggingface-hub",
+    "loguru",
+    "ninja",
+    "numpy",
+    "openai-harmony",
+    "packaging",
+    "psutil",
+    "pydantic",
+    "PyYAML>=6.0",
+    "qwen-vl-utils==0.0.11",
+    "rich",
+    "safetensors",
+    "sglang>=0.5.10,<=0.5.16",
+    "torch>=2.9.1,<=2.11.0",
+    "torchaudio>=2.9.1,<=2.11.0",
+    "torchvision>=0.24.1,<=0.26.0",
+    "transformers>=5.3.0,<=5.12.1",
+    "tqdm",
+    "typing-extensions",
+    "wandb",
+    "yunchang",
+]
+
+[project.urls]
+Repository = "https://github.com/SJTU-DAI-Sys/LiteSpec"
+Issues = "https://github.com/SJTU-DAI-Sys/LiteSpec/issues"
+
+[project.optional-dependencies]
+fa = ["flash-attn"]
+cu128 = ["torch==2.9.1", "torchaudio==2.9.1", "torchvision==0.24.1", "sglang==0.5.10", "transformers==5.3.0"]
+cu130 = ["torch==2.11.0", "torchaudio==2.11.0", "torchvision==0.26.0", "sglang==0.5.16", "transformers==5.12.1"]
+
+[dependency-groups]
+dev = [
+    "black==24.10.0",
+    "isort==5.13.2",
+    "build",
+    "pre-commit",
+    "pytest",
+]
+
+[tool.setuptools.packages.find]
+include = ["litespec*"]
+
+[tool.setuptools.dynamic]
+version = {file = "version.txt"}
+
+[tool.uv]
+preview = true
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+conflicts = [[{ extra = "cu128" }, { extra = "cu130" }]]
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+[tool.uv.extra-build-dependencies]
+# This CUDA extension must use the exact PyTorch C++ ABI selected by the lock.
+causal-conv1d = [{ requirement = "torch", match-runtime = true }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", extra = "cu128" }, { index = "pytorch-cu130", extra = "cu130" }]
+torchaudio = [{ index = "pytorch-cu128", extra = "cu128" }, { index = "pytorch-cu130", extra = "cu130" }]
+torchvision = [{ index = "pytorch-cu128", extra = "cu128" }, { index = "pytorch-cu130", extra = "cu130" }]

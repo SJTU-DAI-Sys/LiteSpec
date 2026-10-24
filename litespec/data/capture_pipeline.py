@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import io
 import queue
 import threading
-import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -15,8 +13,7 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
-from .capture_metrics import metrics, tensor_digest
-from .capture_storage import DirectTarWriter, publish_json
+from .capture_storage import DirectTarWriter, publish_json, tensor_digest
 from .hidden_raw import RawPayload, encode_raw_sample
 
 
@@ -35,7 +32,6 @@ class PinnedPool:
     def __init__(self, byte_limit: int) -> None:
         self.byte_limit = byte_limit
         self.allocated = 0
-        self.peak = 0
         self.free: list[PinnedBlock] = []
         self.lock = threading.Condition()
 
@@ -64,22 +60,20 @@ class PinnedPool:
                     return self.free.pop(index)
             if required > self.byte_limit:
                 raise MemoryError("one capture batch exceeds the pinned byte limit")
-            with metrics.cpu("pinned_byte_backpressure"):
-                while self.allocated + required > self.byte_limit:
-                    while self.free and self.allocated + required > self.byte_limit:
-                        self.allocated -= self.free.pop().nbytes
-                    if self.allocated + required <= self.byte_limit:
-                        break
-                    if check is not None:
-                        check()
-                    self.lock.wait(timeout=0.1)
+            while self.allocated + required > self.byte_limit:
+                while self.free and self.allocated + required > self.byte_limit:
+                    self.allocated -= self.free.pop().nbytes
+                if self.allocated + required <= self.byte_limit:
+                    break
+                if check is not None:
+                    check()
+                self.lock.wait(timeout=0.1)
             block = PinnedBlock(
                 torch.empty((capacity, aux_width), dtype=dtype, pin_memory=True),
                 torch.empty((capacity, hidden_size), dtype=dtype, pin_memory=True),
                 torch.empty((), dtype=torch.bool, pin_memory=True),
             )
             self.allocated += block.nbytes
-            self.peak = max(self.peak, self.allocated)
             return block
 
     def release(self, block: PinnedBlock) -> None:
@@ -130,7 +124,6 @@ class CapturePipeline:
             identity,
             args.target_shard_bytes,
             args.resume,
-            raw=args.cache_format == "tar-raw-v1",
         )
         self.serializers = ThreadPoolExecutor(
             max_workers=args.writer_workers, thread_name_prefix="capture-serialize"
@@ -145,9 +138,8 @@ class CapturePipeline:
             raise RuntimeError("background capture writer failed") from self.error
 
     def reserve(self) -> None:
-        with metrics.cpu("queue_backpressure"):
-            while not self.slots.acquire(timeout=0.1):
-                self.check()
+        while not self.slots.acquire(timeout=0.1):
+            self.check()
         self.check()
 
     def submit(self, output: Any, records: list[dict[str, Any]]) -> None:
@@ -162,32 +154,25 @@ class CapturePipeline:
             output.final_hidden.dtype,
             self.check,
         )
-        with metrics.cuda("finite_check_gpu"):
-            valid = (
-                torch.isfinite(output.aux_hidden).all()
-                & torch.isfinite(output.final_hidden).all()
-            )
+        valid = (
+            torch.isfinite(output.aux_hidden).all()
+            & torch.isfinite(output.final_hidden).all()
+        )
         ready = torch.cuda.Event()
         ready.record()
         done = torch.cuda.Event()
-        with metrics.cpu("d2h_launch"), torch.cuda.stream(self.stream):
+        with torch.cuda.stream(self.stream):
             self.stream.wait_event(ready)
-            with metrics.cuda("d2h_gpu", self.stream):
-                block.aux[: output.offsets[-1]].copy_(
-                    output.aux_hidden, non_blocking=True
-                )
-                block.final[: output.offsets[-1]].copy_(
-                    output.final_hidden, non_blocking=True
-                )
-                block.valid.copy_(valid, non_blocking=True)
+            block.aux[: output.offsets[-1]].copy_(output.aux_hidden, non_blocking=True)
+            block.final[: output.offsets[-1]].copy_(
+                output.final_hidden, non_blocking=True
+            )
+            block.valid.copy_(valid, non_blocking=True)
             done.record(self.stream)
             output.aux_hidden.record_stream(self.stream)
             output.final_hidden.record_stream(self.stream)
             valid.record_stream(self.stream)
         self.queue.put(PendingBatch(output, records, block, done))
-        if self.args.capture_mode == "sync":
-            self.queue.join()
-            self.check()
 
     def _encode(
         self, pending: PendingBatch, index: int
@@ -201,34 +186,14 @@ class CapturePipeline:
         }
         aux = pending.block.aux[begin:end]
         final = pending.block.final[begin:end]
-        with metrics.cpu("serialization"):
-            if self.args.cache_format == "tar-raw-v1":
-                payload = encode_raw_sample(
-                    record["source_index"],
-                    tokens,
-                    aux,
-                    final,
-                    output.layer_ids,
-                    output.final_layer_id,
-                )
-            else:
-                width = final.shape[1]
-                hidden = {
-                    layer: aux[
-                        :, position * width : (position + 1) * width
-                    ].contiguous()
-                    for position, layer in enumerate(output.layer_ids)
-                }
-                value = {
-                    "schema_version": 2,
-                    "sample_index": record["source_index"],
-                    **tokens,
-                    "hidden_states": hidden,
-                    "final_hidden_state": final.contiguous(),
-                }
-                handle = io.BytesIO()
-                torch.save(value, handle)
-                payload = RawPayload(handle.getvalue(), ())
+        payload = encode_raw_sample(
+            record["source_index"],
+            tokens,
+            aux,
+            final,
+            output.layer_ids,
+            output.final_layer_id,
+        )
         metadata = index_metadata(record, end - begin)
         metadata.update(
             hidden_dtype=str(final.dtype),
@@ -245,8 +210,7 @@ class CapturePipeline:
                     self.queue.task_done()
                     break
                 try:
-                    with metrics.cpu("d2h_writer_wait"):
-                        pending.event.synchronize()
+                    pending.event.synchronize()
                     if not bool(pending.block.valid):
                         raise ValueError(
                             "capture contains NaN or Inf; batch is not committed"
@@ -259,10 +223,6 @@ class CapturePipeline:
                         for future in futures:
                             source_index, payload, metadata = future.result()
                             self.writer.append(source_index, payload, metadata)
-                            metrics.count("samples", 1)
-                            metrics.count(
-                                "effective_tokens", metadata["sequence_length"]
-                            )
                     except BaseException as error:
                         self.error = error
                         raise
@@ -295,7 +255,6 @@ class CapturePipeline:
                 continue
         self.thread.join()
         self.check()
-        metrics.count("pinned_peak_bytes", self.pool.peak)
         return self.writer.committed
 
 
@@ -363,7 +322,7 @@ def run_packed_capture(
         "batch_size": args.batch_size,
         "tp_size": args.tp_size,
         "attention_backend": args.sglang_attention_backend,
-        "cache_format": args.cache_format,
+        "cache_format": "tar-raw-v1",
     }
     pipeline = None
     initial_error = None
@@ -387,7 +346,6 @@ def run_packed_capture(
         if value[0] is not None:
             raise RuntimeError(value[0])
 
-    start = time.monotonic()
     try:
         for records in capture_records(
             processed,
@@ -403,22 +361,15 @@ def run_packed_capture(
                 except BaseException as exception:
                     error = "".join(traceback.format_exception(exception))
             coordinate(error)
-            with metrics.cpu("capture_batch_inclusive"):
-                token_lists = [
-                    record["input_ids"].reshape(-1).tolist() for record in records
-                ]
-                pad_token_id = getattr(args, "capture_pad_token_id", None)
-                if pad_token_id is None:
-                    output = target.generate_capture_data(token_lists)
-                else:
-                    output = target.generate_capture_data(
-                        token_lists, pad_token_id=pad_token_id
-                    )
-                if owner:
-                    try:
-                        pipeline.submit(output, records)
-                    except BaseException as exception:
-                        error = "".join(traceback.format_exception(exception))
+            token_lists = [
+                record["input_ids"].reshape(-1).tolist() for record in records
+            ]
+            output = target.generate_capture_data(token_lists)
+            if owner:
+                try:
+                    pipeline.submit(output, records)
+                except BaseException as exception:
+                    error = "".join(traceback.format_exception(exception))
             coordinate(error)
         local_shards = None
         error = None
@@ -428,7 +379,6 @@ def run_packed_capture(
             except BaseException as exception:
                 error = "".join(traceback.format_exception(exception))
         coordinate(error)
-        metrics.add("capture_save_pipeline", time.monotonic() - start)
         gathered = [None] * world_size
         dist.all_gather_object(gathered, local_shards, group=world_cpu_group)
         manifest = None
@@ -461,7 +411,7 @@ def run_packed_capture(
                     "sample_index_version": 1,
                     "complete": True,
                     "save_mode": "regen_full",
-                    "cache_format": args.cache_format,
+                    "cache_format": "tar-raw-v1",
                     "input_identity": identity,
                     "successful_samples": ordinal,
                     "failed_samples": 0,

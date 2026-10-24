@@ -1,4 +1,6 @@
 # coding=utf-8
+# Modified for LiteSpec: adapt target execution and hidden-state access to LiteSpec.
+# Upstream attribution and license terms: THIRD_PARTY_NOTICES.md.
 # Copyright 2025 The LLAMA4 and HuggingFace Inc. team. All rights reserved.
 #
 #

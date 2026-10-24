@@ -1,4 +1,3 @@
-# Adapted from: https://github.com/sgl-project/sglang/blob/main/python/sglang/lang/chat_template.py#L13
 from typing import List
 
 from pydantic import BaseModel

@@ -1,4 +1,6 @@
 # coding=utf-8
+# Modified for LiteSpec: adapt target execution and hidden-state access to LiteSpec.
+# Upstream attribution and license terms: THIRD_PARTY_NOTICES.md.
 # Copyright 2022 EleutherAI and the HuggingFace Inc. team. All rights reserved.
 #
 # This code is based on EleutherAI's GPT-NeoX library and the GPT-NeoX

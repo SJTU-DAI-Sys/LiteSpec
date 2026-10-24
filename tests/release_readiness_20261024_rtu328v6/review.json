@@ -1,0 +1,70 @@
+{
+  "repository": "/diancpfs/user/wanghanzhen/LiteSpec_publish",
+  "scope": "Current working-tree snapshot, including uncommitted changes; seven-commit reachable Git history credential scan",
+  "production_files_modified": false,
+  "findings": [
+    {
+      "priority": "P1",
+      "title": "Credentials are submitted as experiment configuration",
+      "locations": [
+        "litespec/training/logging.py:225",
+        "litespec/training/logging.py:258",
+        "litespec/training/logging.py:290",
+        "litespec/training/logging.py:316",
+        "litespec/training/logging.py:397"
+      ],
+      "evidence": "Mock W&B initialization confirmed both dummy wandb_key and swanlab_key appear in config. No real credentials or external services used.",
+      "recommendation": "Filter credential fields from a shared public configuration before passing it to any tracker."
+    },
+    {
+      "priority": "P1",
+      "title": "License metadata and distributed license text disagree",
+      "locations": [
+        "pyproject.toml:11",
+        "LICENSE:1",
+        "litespec/modeling/target/custom_backend/qwen3.py:4",
+        "litespec/data/preprocessing.py:11"
+      ],
+      "evidence": "Project metadata declares Apache-2.0; LICENSE contains MIT and sgl-project copyright. Apache-derived source exists; only MIT LICENSE is bundled in wheel.",
+      "recommendation": "Resolve project licensing intent and distribute applicable upstream license texts and attributions; preserve original notices and document modifications."
+    },
+    {
+      "priority": "P2",
+      "title": "Source distribution omits files required by published documentation",
+      "locations": [
+        "MANIFEST.in:1",
+        "scripts/setup_environment.sh:16",
+        "README.md:58"
+      ],
+      "evidence": "Built source archive contains setup_environment.sh but omits uv.lock and all assets, although the setup command uses uv sync --frozen and README references assets.",
+      "recommendation": "Include uv.lock and referenced documentation assets in the source distribution and smoke-test the extracted archive."
+    }
+  ],
+  "verification": {
+    "syntax_python_files": 117,
+    "syntax_errors": 0,
+    "pytest_passed": 76,
+    "pytest_skipped": 10,
+    "pytest_warnings": 3,
+    "pytest_seconds": 26.3,
+    "gpu_tests_run": false,
+    "isolated_build": "sdist and wheel built successfully",
+    "tracked_model_or_hidden_artifacts": false,
+    "confirmed_credential_pattern_matches": 0,
+    "history_blobs_scanned": 231,
+    "secret_scan_limit": "Pattern scan and selected manual review, not an exhaustive secret audit",
+    "private_server_paths_in_tracked_text": 0,
+    "diff_check": "fails on Markdown trailing spaces; some represent intentional Markdown hard line breaks"
+  },
+  "additional_observations": [
+    "No CI workflow is present.",
+    "Training accuracy SVG is about 4.17 MB and embeds numerous fonts; simplify for public distribution.",
+    "New data collection SVG assets are still untracked and must be included in the release commit."
+  ],
+  "not_verified": [
+    "Fresh installation of all runtime dependencies",
+    "CUDA 12.8 runtime regression",
+    "Full multi-GPU training or capture during this review",
+    "Complete provenance audit for every copied line and embedded font"
+  ]
+}

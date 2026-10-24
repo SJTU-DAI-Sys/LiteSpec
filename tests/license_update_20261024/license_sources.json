@@ -1,0 +1,42 @@
+{
+  "Apache-2.0.txt": {
+    "source": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "bytes": 11358
+  },
+  "SpecForge-MIT.txt": {
+    "source": "https://raw.githubusercontent.com/sgl-project/SpecForge/main/LICENSE",
+    "sha256": "da25818d68a3da676fed16a019beadd6b12f5e4d59ade85840c23a6070240323",
+    "bytes": 1068
+  },
+  "SGLang-Apache-2.0.txt": {
+    "source": "https://raw.githubusercontent.com/sgl-project/sglang/v0.5.4/LICENSE",
+    "sha256": "1495e1e757ef4d0925a2350563cf5754bb23c51701a8ec4fb3c5cdcbedae6747",
+    "bytes": 11346
+  },
+  "Transformers-Apache-2.0.txt": {
+    "source": "https://raw.githubusercontent.com/huggingface/transformers/v5.12.1/LICENSE",
+    "sha256": "77fd4710def9ec3c0f6225800e0235f15a425abd4a8b03559127fcd782612049",
+    "bytes": 11418
+  },
+  "EAGLE-Apache-2.0.txt": {
+    "source": "https://raw.githubusercontent.com/SafeAILab/EAGLE/main/LICENSE",
+    "sha256": "2c042313b4fb4350fa09f81aabf6b77686855e1071a8af07845684e9cba6d3c7",
+    "bytes": 558
+  },
+  "Verl-Apache-2.0.txt": {
+    "source": "https://raw.githubusercontent.com/volcengine/verl/a0e8e4472b8b472409defb0c8fcc5162301450af/LICENSE",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "bytes": 11358
+  },
+  "YunChang-Apache-2.0.txt": {
+    "source": "https://raw.githubusercontent.com/feifeibear/long-context-attention/main/LICENSE.txt",
+    "sha256": "a907cd39025ad23f24ae1c2f7f9144e0111b8ae9038c82fce21dc143fe69ce55",
+    "bytes": 11358
+  },
+  "Ring-Flash-Attention-MIT.txt": {
+    "source": "https://raw.githubusercontent.com/zhuzilin/ring-flash-attention/main/LICENSE",
+    "sha256": "ce2e1390bf851d31c087b5e75d4cb4a383a8304daa330243ef7c2100fc454ba7",
+    "bytes": 1056
+  }
+}

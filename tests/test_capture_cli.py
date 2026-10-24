@@ -1,6 +1,8 @@
 """Keep capture defaults stable and reject unsupported pipeline combinations."""
 
 import importlib.util
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -25,21 +27,30 @@ def arguments(*extra):
     )
 
 
-def test_legacy_defaults():
+def test_capture_defaults():
     args = arguments()
-    assert args.capture_mode == "sync" and args.cache_format == "tar-v2"
-    assert args.batch_size == 1 and args.shard_size == 512
+    assert args.batch_size == 1
     assert args.max_length == 4096 and args.token_budget == 0
+    assert args.target_shard_mib == 2048 and args.pending_mib == 8192
+
+
+def test_public_capture_entrypoint_help():
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    assert "--target-shard-mib" in result.stdout
+    assert "--capture-mode" not in result.stdout
+    assert "--cache-format" not in result.stdout
+    assert "--shard-size" not in result.stdout
+    assert "--profiling-output" not in result.stdout
 
 
 def test_async_controls():
     args = arguments(
-        "--target-model-backend",
-        "sglang",
-        "--capture-mode",
-        "async",
-        "--cache-format",
-        "tar-raw-v1",
         "--tp-size",
         "2",
         "--batch-size",
@@ -49,24 +60,36 @@ def test_async_controls():
     )
     assert args.tp_size == 2 and args.batch_size == 4 and args.token_budget == 8192
     assert args.queue_depth == 2 and args.writer_workers == 2
-    assert args.pending_bytes == 8 * 1024**3
+    assert args.target_shard_mib == 2048 and args.pending_mib == 8192
+    assert args.target_shard_bytes == 2048 * 1024**2
+    assert args.pending_bytes == 8192 * 1024**2
 
 
 @pytest.mark.parametrize(
     "options",
     [
         ("--capture-mode", "async"),
+        ("--cache-format", "tar-v2"),
+        ("--shard-size", "512"),
         ("--queue-depth", "0"),
         ("--token-budget", "-1"),
-        (
-            "--target-model-backend",
-            "sglang",
-            "--cache-format",
-            "tar-raw-v1",
-            "--compress",
-        ),
+        ("--capture-request-layout", "padded"),
+        ("--profiling-output", "/tmp/capture_timings.json"),
     ],
 )
 def test_invalid_controls(options):
     with pytest.raises(SystemExit):
         arguments(*options)
+
+
+def test_packed_resume_rejects_legacy_or_padded_partial_runs(tmp_path):
+    capture.validate_packed_capture_directory(tmp_path)
+    (tmp_path / "staging").mkdir()
+    with pytest.raises(capture.HiddenStateError, match="new output directory"):
+        capture.validate_packed_capture_directory(tmp_path)
+    marker = tmp_path / "capture_config.json"
+    marker.write_text(json.dumps({"capture_request_layout": "padded"}))
+    with pytest.raises(capture.HiddenStateError, match="new output directory"):
+        capture.validate_packed_capture_directory(tmp_path)
+    marker.write_text(json.dumps({"capture_request_layout": "packed"}))
+    capture.validate_packed_capture_directory(tmp_path)

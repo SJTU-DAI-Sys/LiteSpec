@@ -1,4 +1,3 @@
-# coding=utf-8
 """DSpark draft model entry point and Markov heads."""
 
 from __future__ import annotations

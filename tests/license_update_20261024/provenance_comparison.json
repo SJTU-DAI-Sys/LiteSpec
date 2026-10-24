@@ -1,0 +1,91 @@
+[
+  {
+    "local": "litespec/data/template.py",
+    "upstream": "specforge/data/template.py",
+    "revision": "f586b1ee40b5e4bf3ef03954849024b57a5edb7a",
+    "source": "https://raw.githubusercontent.com/sgl-project/SpecForge/f586b1ee40b5e4bf3ef03954849024b57a5edb7a/specforge/data/template.py",
+    "shared_named_definitions": [
+      "ChatTemplate",
+      "TemplateRegistry",
+      "__init__",
+      "get",
+      "get_all_template_names",
+      "register"
+    ]
+  },
+  {
+    "local": "litespec/data/preprocessing.py",
+    "upstream": "specforge/data/preprocessing.py",
+    "revision": "f586b1ee40b5e4bf3ef03954849024b57a5edb7a",
+    "source": "https://raw.githubusercontent.com/sgl-project/SpecForge/f586b1ee40b5e4bf3ef03954849024b57a5edb7a/specforge/data/preprocessing.py",
+    "shared_named_definitions": [
+      "_apply_loss_mask_from_chat_template",
+      "preprocess_conversations",
+      "preprocess_function"
+    ]
+  },
+  {
+    "local": "litespec/data/utils.py",
+    "upstream": "specforge/data/utils.py",
+    "revision": "f586b1ee40b5e4bf3ef03954849024b57a5edb7a",
+    "source": "https://raw.githubusercontent.com/sgl-project/SpecForge/f586b1ee40b5e4bf3ef03954849024b57a5edb7a/specforge/data/utils.py",
+    "shared_named_definitions": [
+      "DataCollatorWithPadding",
+      "__call__",
+      "__init__",
+      "paddingtensor",
+      "paddingtensor2D",
+      "parse_harmony_message_content",
+      "prepare_dp_dataloaders",
+      "process_harmony_conversations"
+    ]
+  },
+  {
+    "local": "litespec/modeling/target/sglang_backend/utils.py",
+    "upstream": "specforge/offline_capture/sglang_backend/utils.py",
+    "revision": "f586b1ee40b5e4bf3ef03954849024b57a5edb7a",
+    "source": "https://raw.githubusercontent.com/sgl-project/SpecForge/f586b1ee40b5e4bf3ef03954849024b57a5edb7a/specforge/offline_capture/sglang_backend/utils.py",
+    "shared_named_definitions": [
+      "__init__",
+      "forward"
+    ]
+  },
+  {
+    "local": "litespec/modeling/target/sglang_backend/model_runner.py",
+    "upstream": "specforge/offline_capture/sglang_backend/model_runner.py",
+    "revision": "f586b1ee40b5e4bf3ef03954849024b57a5edb7a",
+    "source": "https://raw.githubusercontent.com/sgl-project/SpecForge/f586b1ee40b5e4bf3ef03954849024b57a5edb7a/specforge/offline_capture/sglang_backend/model_runner.py",
+    "shared_named_definitions": [
+      "SGLangRunner",
+      "_",
+      "init_torch_distributed"
+    ]
+  },
+  {
+    "local": "litespec/modeling/target/sglang_backend/patch.py",
+    "upstream": "specforge/offline_capture/sglang_backend/patch.py",
+    "revision": "f586b1ee40b5e4bf3ef03954849024b57a5edb7a",
+    "source": "https://raw.githubusercontent.com/sgl-project/SpecForge/f586b1ee40b5e4bf3ef03954849024b57a5edb7a/specforge/offline_capture/sglang_backend/patch.py",
+    "shared_named_definitions": [
+      "init_distributed_environment",
+      "initialize_dp_attention",
+      "initialize_model_parallel"
+    ]
+  },
+  {
+    "local": "litespec/layers/ring/ring_flash_attn.py",
+    "upstream": "specforge/layers/ring/ring_flash_attn.py",
+    "revision": "f586b1ee40b5e4bf3ef03954849024b57a5edb7a",
+    "source": "https://raw.githubusercontent.com/sgl-project/SpecForge/f586b1ee40b5e4bf3ef03954849024b57a5edb7a/specforge/layers/ring/ring_flash_attn.py",
+    "shared_named_definitions": [
+      "RingFlashAttnFunc",
+      "backward",
+      "forward",
+      "ring_flash_attn_backward",
+      "ring_flash_attn_forward",
+      "ring_flash_attn_func",
+      "ring_flash_attn_kvpacked_func",
+      "ring_flash_attn_qkvpacked_func"
+    ]
+  }
+]

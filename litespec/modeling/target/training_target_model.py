@@ -8,8 +8,6 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 
-from litespec.data.capture_metrics import metrics
-
 
 @dataclass
 class TargetTrainingOutput:
@@ -157,15 +155,11 @@ class SGLangTrainingTargetModel(TrainingTargetModel):
                 pp_rank=0,
                 pp_size=1,
             )
-        with metrics.cpu("model_construct_load"):
-            model_runner = SGLangRunner(**runner_kwargs)
+        model_runner = SGLangRunner(**runner_kwargs)
         if hasattr(model_runner, "ps"):
-            with metrics.cpu("memory_pool_initialization"):
-                model_runner.alloc_memory_pool()
-            with metrics.cpu("attention_backend_initialization"):
-                model_runner.init_attention_backends()
-            with metrics.cpu("extension_compile_warmup"):
-                model_runner.init_cuda_graphs(capture_decode_cuda_graph=False)
+            model_runner.alloc_memory_pool()
+            model_runner.init_attention_backends()
+            model_runner.init_cuda_graphs(capture_decode_cuda_graph=False)
         wrap_eagle3_logits_processors_in_module(
             model_runner.model, return_full_logits=True
         )
@@ -424,8 +418,7 @@ class SGLangTrainingTargetModel(TrainingTargetModel):
             enable_overlap=False,
             spec_algorithm=SpeculativeAlgorithm.NONE,
         )
-        with metrics.cpu("request_prepare_extend"):
-            batch.prepare_for_extend()
+        batch.prepare_for_extend()
 
         if require_mlp_sync(self.model_runner.server_args):
             Scheduler.prepare_mlp_sync_batch_raw(
@@ -447,11 +440,10 @@ class SGLangTrainingTargetModel(TrainingTargetModel):
         if current_runtime:
             from sglang.srt.layers.dp_attention import set_is_extend_in_batch
 
-            with metrics.cpu("request_h2d_launch"), metrics.cuda("request_h2d_gpu"):
-                batch.input_ids = batch.prefill_input_ids_cpu.to(
-                    batch.device, non_blocking=True
-                )
-                batch.prefill_input_ids_cpu = None
+            batch.input_ids = batch.prefill_input_ids_cpu.to(
+                batch.device, non_blocking=True
+            )
+            batch.prefill_input_ids_cpu = None
             forward_batch = ForwardBatch.init_new(
                 batch, self.model_runner, return_hidden_states_before_norm=False
             )
@@ -461,8 +453,7 @@ class SGLangTrainingTargetModel(TrainingTargetModel):
             forward_batch = ForwardBatch.init_new(model_worker_batch, self.model_runner)
         forward_batch.capture_hidden_mode = CaptureHiddenMode.FULL
 
-        with metrics.cpu("forward_launch_inclusive"), metrics.cuda("forward_gpu"):
-            runner_output = self.model_runner.forward(forward_batch)
+        runner_output = self.model_runner.forward(forward_batch)
         output = self._unpack_runner_output(runner_output)
 
         if packed:
@@ -504,52 +495,29 @@ class SGLangTrainingTargetModel(TrainingTargetModel):
 
     @torch.no_grad()
     def generate_capture_data(
-        self, token_lists: list[list[int]], *, pad_token_id: int | None = None
+        self, token_lists: list[list[int]]
     ) -> TargetCaptureOutput:
         """Forward true CPU lengths through native SGLang variable-length prefill."""
         from sglang.srt.managers.schedule_batch import Req
         from sglang.srt.sampling.sampling_params import SamplingParams
 
-        with metrics.cpu("request_construction"):
-            params = SamplingParams(temperature=0, max_new_tokens=1)
-            requests = []
-            maximum = max(map(len, token_lists))
-            for index, tokens in enumerate(token_lists):
-                if not tokens:
-                    raise ValueError("capture request contains no tokens")
-                request_tokens = (
-                    tokens
-                    if pad_token_id is None
-                    else tokens + [pad_token_id] * (maximum - len(tokens))
-                )
-                request = Req(
-                    rid=str(index),
-                    origin_input_text="",
-                    origin_input_ids=request_tokens,
-                    sampling_params=params,
-                )
-                request.fill_ids = request.origin_input_ids
-                request.extend_input_len = len(request_tokens)
-                requests.append(request)
+        params = SamplingParams(temperature=0, max_new_tokens=1)
+        requests = []
+        for index, tokens in enumerate(token_lists):
+            if not tokens:
+                raise ValueError("capture request contains no tokens")
+            request = Req(
+                rid=str(index),
+                origin_input_text="",
+                origin_input_ids=tokens,
+                sampling_params=params,
+            )
+            request.fill_ids = request.origin_input_ids
+            request.extend_input_len = len(tokens)
+            requests.append(request)
         aux, final = self._extend(requests, return_logits=False, packed=True)
         if aux is None:
             aux = final.new_empty((final.shape[0], 0))
-        if pad_token_id is not None:
-            # Hybrid recurrent kernels can be sensitive to physical sequence
-            # lengths. Preserve dense compute when packed prefill fails the
-            # numerical gate, while retaining CPU requests and packed storage.
-            aux = torch.cat(
-                [
-                    aux[index * maximum : index * maximum + len(tokens)]
-                    for index, tokens in enumerate(token_lists)
-                ]
-            )
-            final = torch.cat(
-                [
-                    final[index * maximum : index * maximum + len(tokens)]
-                    for index, tokens in enumerate(token_lists)
-                ]
-            )
         hidden_size = int(self.model_runner.model_config.hidden_size)
         final_id = int(self.model_runner.model_config.num_hidden_layers) - 1
         layers = [index for index in self.capture_layer_ids if index != final_id]

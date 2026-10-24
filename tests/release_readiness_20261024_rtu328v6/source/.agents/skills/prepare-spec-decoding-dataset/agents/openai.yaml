@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prepare Spec Decoding Dataset"
+  short_description: "Adapt prompt datasets to FlashMTP regeneration JSONL"
+  default_prompt: "Inspect this dataset, confirm its prompt and turn structure, then create an adapter and convert it for FlashMTP regeneration."
