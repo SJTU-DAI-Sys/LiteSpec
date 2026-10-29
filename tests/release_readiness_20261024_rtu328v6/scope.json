@@ -1,7 +1,0 @@
-{
-  "repo": "/diancpfs/user/wanghanzhen/LiteSpec_publish",
-  "head": "9098ab85b3643732f00d1a363a86307a2b95c4a3",
-  "snapshot": "/diancpfs/user/wanghanzhen/LiteSpec_publish/tests/release_readiness_20261024_rtu328v6/source",
-  "gpu_tests": "disabled via CUDA_VISIBLE_DEVICES",
-  "scope": "working tree including uncommitted changes; no source edits"
-}

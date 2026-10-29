@@ -398,7 +398,9 @@ class BF16Optimizer:
                 lr=float(muon_config["adamw_lr"]),
                 weight_decay=float(muon_config["adamw_weight_decay"]),
                 kind="muon_adamw_v1",
-                muon=muon_config,
+                # Scheduling/memory policy does not change optimizer math or
+                # checkpoint compatibility with existing hybrid runs.
+                muon={k: v for k, v in muon_config.items() if k != "low_memory"},
             )
             if [s.name for s in self.parameter_specs] != self.parameter_names or [
                 l.spec for l in self.parameter_layouts
@@ -537,6 +539,8 @@ class BF16Optimizer:
         return local_squared_norm.sqrt()
 
     def step(self) -> float:
+        if self.muon_optimizer is not None:
+            self.muon_optimizer.prepare_communication()
         with torch.no_grad():
             for p, mp in zip(self.model_params, self.fp32_params):
                 mp.grad = (
@@ -544,6 +548,10 @@ class BF16Optimizer:
                     if p.grad is not None and (not self.use_muon or p.requires_grad)
                     else None
                 )
+                if self.use_muon:
+                    # Master gradients now own the data needed by the update.
+                    # Avoid retaining BF16 gradients throughout FP32/Muon work.
+                    p.grad = None
             if self.use_muon:
                 mask = torch.tensor(
                     [p.grad is not None for p in self.fp32_params],
@@ -576,7 +584,10 @@ class BF16Optimizer:
             self.optimizer.zero_grad(set_to_none=True)
             self.scheduler.step()
         if self.muon_optimizer is not None:
-            self.muon_optimizer.step(active=[active[i] for i in self.muon_indices])
+            self.muon_optimizer.step(
+                active=[active[i] for i in self.muon_indices],
+                release_gradients=True,
+            )
             self.muon_optimizer.zero_grad(set_to_none=True)
             self.muon_scheduler.step()
         with torch.no_grad():

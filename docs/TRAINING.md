@@ -229,6 +229,7 @@ muon_lr: 0.02
 muon_momentum: 0.95
 muon_weight_decay: 0.1
 muon_matrices_per_rank: 1
+muon_low_memory: false
 muon_adamw_lr: 0.0004
 muon_adamw_weight_decay: 0.1
 ```
@@ -262,6 +263,28 @@ weight decay uses the base LR. The math follows PyTorch 2.9.1's implementation.
 `muon_matrices_per_rank: 1` already batches up to one matrix per rank in parallel;
 larger values allow more matrices per compute rank and consume more temporary
 memory. Up to two batches are in flight to overlap collection with computation.
+Set `muon_low_memory: true` (or append `--muon-low-memory`) to finish and release
+each batch before collecting the next. The hybrid wrapper releases original
+model gradients after copying them to FP32 and consumes each FP32 Muon gradient
+after packing its update in either mode. Standalone `ShardedMuon.step()`
+retains gradients by default. Packing uses one BF16 send buffer; transposed NS
+results are made contiguous once, avoiding a full-matrix copy for every peer.
+
+Before the first hybrid update creates FP32 gradients, either mode returns
+unused PyTorch cache and performs a tiny all-to-all to warm peer connections.
+This addresses late NCCL P2P allocations competing with optimizer temporaries;
+it does not reduce persistent NCCL buffers or guarantee that a run fits. The
+mode can reduce optimizer throughput. It changes no optimizer math, FP32 state,
+or checkpoint configuration, so existing hybrid checkpoints remain compatible.
+Keep `muon_matrices_per_rank: 1` when memory is tight. If live allocations still
+exhaust memory, reduce the target cache budget/sequence length or disaggregate.
+
+These changes apply at the optimizer-window boundary: with
+`accumulation_steps: 8`, all eight microbatch gradients are accumulated before
+the update consumes them. The changes do not retain multiple autograd graphs
+or change the accumulation count. Measure both the optimizer-phase peak and
+the full-window peak; FSDP backward may still determine the latter.
+
 The draft FSDP process group, not target ranks, participates in these exchanges.
 The initial adapter supports the pinned PyTorch 2.9.1 FSDP1 configuration:
 `use_orig_params=True`, `SHARD_GRAD_OP`, no CPU offload (single-rank `NO_SHARD`
@@ -285,7 +308,15 @@ Validation/benchmark commands (run from the repository root):
 PYTHONPATH=. .venv/bin/python -m torch.distributed.run --standalone --nproc-per-node=2 tests/distributed_muon_smoke.py
 PYTHONPATH=. .venv/bin/python -m torch.distributed.run --standalone --nproc-per-node=3 tests/distributed_muon_smoke.py --subgroup
 PYTHONPATH=. .venv/bin/python -m torch.distributed.run --standalone --nproc-per-node=2 tests/benchmark_fsdp_muon.py
+PYTHONPATH=. .venv/bin/python -m torch.distributed.run --standalone --nproc-per-node=2 tests/benchmark_muon_memory.py --mode fast --accumulation 8 --output tests/muon-fast.json
 ```
+
+`benchmark_muon_memory.py` runs real FSDP forward/backward and hybrid updates on
+a synthetic gated-MLP draft workload. Run each mode in a fresh process. Use
+`--mode low-memory` for the serial-batch policy, or `--mode baseline
+--baseline-dir PATH` with an unmodified pair of `muon.py` and `optimizer.py`.
+It records phase peaks, window/update time, optional sampled NVML physical
+memory, and final rank-local FP32 master hashes for numerical comparison.
 
 The benchmark uses identical gradients and optimizer settings for serial-matrix
 and batched routing, warms up and synchronizes GPUs, then reports per-step time,

@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from dataclasses import dataclass
+from itertools import chain
 
 import torch
 import torch.distributed as dist
@@ -23,6 +24,7 @@ MUON_DEFAULTS = dict(
     eps=1e-7,
     adjust_lr_fn="original",
     matrices_per_rank=1,
+    low_memory=False,
     adamw_lr=0.0004,
     adamw_betas=(0.9, 0.999),
     adamw_weight_decay=0.1,
@@ -33,6 +35,7 @@ MUON_CLI_KEYS = (
     "momentum",
     "weight_decay",
     "matrices_per_rank",
+    "low_memory",
     "adamw_lr",
     "adamw_weight_decay",
 )
@@ -74,6 +77,8 @@ def validate_muon_config(config):
         raise ValueError("Invalid muon_adjust_lr_fn")
     if not isinstance(config["nesterov"], bool):
         raise ValueError("muon_nesterov must be a boolean")
+    if not isinstance(config["low_memory"], bool):
+        raise ValueError("muon_low_memory must be a boolean")
     return config
 
 
@@ -118,8 +123,8 @@ def adjusted_lr(lr, shape, rule):
 class Exchange:
     indices: list[int]
     owners: list[int]
-    send: torch.Tensor
-    receive: torch.Tensor
+    send: torch.Tensor | None
+    receive: torch.Tensor | None
     send_sizes: list[int]
     receive_sizes: list[int]
     work: object = None
@@ -141,6 +146,7 @@ class ShardedMuon(torch.optim.Optimizer):
         eps=1e-7,
         adjust_lr_fn="original",
         matrices_per_rank=1,
+        low_memory=False,
     ):
         validate_muon_config(
             dict(
@@ -153,6 +159,7 @@ class ShardedMuon(torch.optim.Optimizer):
                 eps=eps,
                 adjust_lr_fn=adjust_lr_fn,
                 matrices_per_rank=matrices_per_rank,
+                low_memory=low_memory,
             )
         )
         defaults = dict(
@@ -173,6 +180,7 @@ class ShardedMuon(torch.optim.Optimizer):
         self.rank = dist.get_rank(process_group) if dist.is_initialized() else 0
         self.world = dist.get_world_size(process_group) if dist.is_initialized() else 1
         self.matrices_per_rank = matrices_per_rank
+        self.low_memory = low_memory
         self.params = self.param_groups[0]["params"]
         if len(self.params) != len(self.layouts):
             raise ValueError("Muon parameter/layout count mismatch")
@@ -185,6 +193,28 @@ class ShardedMuon(torch.optim.Optimizer):
             raise ValueError("matrices_per_rank must be positive")
         self.communication_calls = 0
         self._prefetch_stream = None
+        self._communication_ready = False
+
+    @torch.no_grad()
+    def prepare_communication(self):
+        """Warm P2P connections before FP32 gradients/momentum consume headroom.
+
+        NCCL allocations bypass PyTorch's caching allocator. Return unused cache
+        once, then touch every peer while optimizer temporaries are still absent.
+        This cannot remove NCCL's persistent connection buffers.
+        """
+        if self._communication_ready:
+            return
+        device = self.params[0].device
+        if device.type == "cuda" and self.world > 1:
+            with torch.cuda.device(device):
+                torch.cuda.synchronize(device)
+                torch.cuda.empty_cache()
+                send = torch.zeros(self.world, device=device, dtype=torch.bfloat16)
+                receive = torch.empty_like(send)
+                dist.all_to_all_single(receive, send, group=self.process_group)
+                torch.cuda.synchronize(device)
+        self._communication_ready = True
 
     def _batches(self, active):
         buckets = defaultdict(list)
@@ -217,34 +247,18 @@ class ShardedMuon(torch.optim.Optimizer):
             receive.copy_(send)
         return Exchange(indices, owners, send, receive, send_sizes, receive_sizes, work)
 
-    def _collect(self, indices, owners):
+    def _collect(self, indices, owners, *, release_gradients=False):
         group = self.param_groups[0]
-        updates = {}
-        for i in indices:
-            p = self.params[i]
-            if not p.numel():
-                updates[i] = p.new_empty(0, dtype=torch.bfloat16)
-                continue
-            g = p.grad if p.grad is not None else torch.zeros_like(p)
-            state = self.state[p]
-            if "momentum_buffer" not in state:
-                state["momentum_buffer"] = torch.zeros_like(p)
-            buf = state["momentum_buffer"]
-            if p.is_cuda:
-                stream = torch.cuda.current_stream(p.device)
-                p.record_stream(stream)
-                g.record_stream(stream)
-                buf.record_stream(stream)
-            buf.lerp_(g, 1 - group["momentum"])
-            u = g.lerp(buf, group["momentum"]) if group["nesterov"] else buf
-            updates[i] = u.flatten().bfloat16()
-        parts = []
+        selected_by_peer = [
+            [i for i, owner in zip(indices, owners) if owner == peer]
+            for peer in range(self.world)
+        ]
         send_sizes, receive_sizes = [], []
         for peer in range(self.world):
-            selected = [i for i, owner in zip(indices, owners) if owner == peer]
-            parts.extend(updates[i] for i in selected)
             send_sizes.append(
-                sum(self.layouts[i].shards[self.rank][1] for i in selected)
+                sum(
+                    self.layouts[i].shards[self.rank][1] for i in selected_by_peer[peer]
+                )
             )
             receive_sizes.append(
                 sum(
@@ -253,11 +267,41 @@ class ShardedMuon(torch.optim.Optimizer):
                     if owner == self.rank
                 )
             )
-        send = (
-            torch.cat(parts)
-            if parts
-            else self.params[0].new_empty(0, dtype=torch.bfloat16)
-        )
+        # Pack directly into one BF16 buffer instead of retaining per-matrix
+        # BF16 updates and a second, concatenated copy at the same time.
+        send = self.params[0].new_empty(sum(send_sizes), dtype=torch.bfloat16)
+        cursor = 0
+        for selected in selected_by_peer:
+            for i in selected:
+                p = self.params[i]
+                n = p.numel()
+                if n:
+                    g = p.grad if p.grad is not None else torch.zeros_like(p)
+                    state = self.state[p]
+                    if "momentum_buffer" not in state:
+                        state["momentum_buffer"] = torch.zeros_like(p)
+                    buf = state["momentum_buffer"]
+                    if p.is_cuda:
+                        stream = torch.cuda.current_stream(p.device)
+                        p.record_stream(stream)
+                        g.record_stream(stream)
+                        buf.record_stream(stream)
+                    buf.lerp_(g, 1 - group["momentum"])
+                    if group["nesterov"]:
+                        # The hybrid wrapper discards master gradients after
+                        # this update, so reuse that FP32 storage when allowed.
+                        u = (
+                            g.lerp_(buf, group["momentum"])
+                            if release_gradients
+                            else g.lerp(buf, group["momentum"])
+                        )
+                    else:
+                        u = buf
+                    send[cursor : cursor + n].copy_(u.flatten())
+                    del g, u
+                if release_gradients:
+                    p.grad = None
+                cursor += n
         return self._exchange(indices, owners, send, send_sizes, receive_sizes)
 
     def _orthogonalize_and_return(self, collected):
@@ -265,30 +309,43 @@ class ShardedMuon(torch.optim.Optimizer):
             collected.work.wait()
         indices, owners = collected.indices, collected.owners
         owned = [i for i, owner in zip(indices, owners) if owner == self.rank]
-        matrices = {}
+        send = None
         if owned:
             shape = self.layouts[owned[0]].spec.shape
             full_matrices = collected.receive.new_empty((len(owned), *shape))
-            matrices = dict(zip(owned, full_matrices.unbind()))
             cursor = 0
             for peer in range(self.world):
-                for i in owned:
+                for j, i in enumerate(owned):
                     offset, length = self.layouts[i].shards[peer]
-                    matrices[i].view(-1)[offset : offset + length].copy_(
+                    full_matrices[j].view(-1)[offset : offset + length].copy_(
                         collected.receive[cursor : cursor + length]
                     )
                     cursor += length
+            # Work.wait() orders communication before the copies above on the
+            # current stream. Neither exchange buffer is needed by NS, even
+            # when the next batch is being prefetched on another stream.
+            collected.send = collected.receive = collected.work = None
             group = self.param_groups[0]
             orthogonalized_matrices = newton_schulz(
                 full_matrices, group["ns_coefficients"], group["ns_steps"], group["eps"]
-            )
-            matrices = dict(zip(owned, orthogonalized_matrices.unbind()))
-        parts = []
-        for peer in range(self.world):
-            for i in owned:
-                offset, length = self.layouts[i].shards[peer]
-                parts.append(matrices[i].reshape(-1)[offset : offset + length])
-        send = torch.cat(parts) if parts else collected.receive.new_empty(0)
+            ).contiguous()
+            del full_matrices
+            # Tall matrices leave NS transposed. Flattening each peer's slice
+            # separately used to retain world_size full contiguous copies.
+            flat = orthogonalized_matrices.view(len(owned), -1)
+            send = flat.new_empty(sum(collected.receive_sizes))
+            cursor = 0
+            for peer in range(self.world):
+                for j, i in enumerate(owned):
+                    offset, length = self.layouts[i].shards[peer]
+                    send[cursor : cursor + length].copy_(
+                        flat[j, offset : offset + length]
+                    )
+                    cursor += length
+            del flat, orthogonalized_matrices
+        if send is None:
+            send = self.params[0].new_empty(0, dtype=torch.bfloat16)
+        collected.send = collected.receive = collected.work = None
         return self._exchange(
             indices, owners, send, collected.receive_sizes, collected.send_sizes
         )
@@ -315,9 +372,10 @@ class ShardedMuon(torch.optim.Optimizer):
                 cursor += n
 
     @torch.no_grad()
-    def step(self, closure=None, *, active=None):
+    def step(self, closure=None, *, active=None, release_gradients=False):
         if closure is not None:
             raise ValueError("ShardedMuon does not support closures")
+        self.prepare_communication()
         if active is None:
             mask = torch.tensor(
                 [p.grad is not None for p in self.params],
@@ -332,6 +390,17 @@ class ShardedMuon(torch.optim.Optimizer):
         self.communication_calls = 0
         if first is None:
             return
+        if self.low_memory:
+            # Finish and release each batch before allocating the next one.
+            # Standalone optimizer users retain gradients unless explicitly
+            # opting into consumption; BF16Optimizer already clears them.
+            for batch in chain((first,), batches):
+                collected = self._collect(*batch, release_gradients=release_gradients)
+                returned = self._orthogonalize_and_return(collected)
+                del collected
+                self._apply(returned)
+                del returned
+            return
         # A dedicated stream lets gather(k+1) run while NS(k) runs. Events join
         # the streams without host/device barriers. NCCL order is identical on
         # every rank: gather0, gather1, return0, gather2, return1, ... .
@@ -340,7 +409,7 @@ class ShardedMuon(torch.optim.Optimizer):
         if compute is not None and self._prefetch_stream is None:
             self._prefetch_stream = torch.cuda.Stream(device=device)
         prefetch = self._prefetch_stream
-        current = self._collect(*first)
+        current = self._collect(*first, release_gradients=release_gradients)
         while current is not None:
             next_batch = next(batches, None)
             upcoming = None
@@ -349,12 +418,17 @@ class ShardedMuon(torch.optim.Optimizer):
                 if prefetch is not None:
                     prefetch.wait_stream(compute)
                     with torch.cuda.stream(prefetch):
-                        upcoming = self._collect(*next_batch)
+                        upcoming = self._collect(
+                            *next_batch, release_gradients=release_gradients
+                        )
                         event = prefetch.record_event()
                 else:
-                    upcoming = self._collect(*next_batch)
+                    upcoming = self._collect(
+                        *next_batch, release_gradients=release_gradients
+                    )
             returned = self._orthogonalize_and_return(current)
             self._apply(returned)
+            del returned
             if event is not None:
                 compute.wait_event(event)
                 # Transfers ownership of temporary allocations to this stream.

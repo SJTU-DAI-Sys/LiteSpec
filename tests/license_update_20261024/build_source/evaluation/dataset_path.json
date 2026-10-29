@@ -1,7 +1,0 @@
-{
-  "longbench_v2_64000_32000_single_document_qa": "datasets/longbench_v2/Single-Document_QA_32k_64k.jsonl",
-  "longbench_v2_64000_32000_multi_document_qa": "datasets/longbench_v2/Multi-Document_QA_32k_64k.jsonl",
-  "longbench_v2_64000_32000_long_dialogue": "datasets/longbench_v2/Long-dialogue_History_Understanding_32k_64k.jsonl",
-  "longbench_v2_64000_32000_in_context_learning": "datasets/longbench_v2/Long_In-context_Learning_32k_64k.jsonl",
-  "longbench_v2_64000_32000_code_repo": "datasets/longbench_v2/Code_Repository_Understanding_32k_64k.jsonl"
-}

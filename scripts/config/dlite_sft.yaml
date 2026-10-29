@@ -48,6 +48,8 @@ arguments:
   muon_weight_decay: 0.0
   # Each batch handles up to world_size * this many same-shape matrices.
   muon_matrices_per_rank: 1
+  # Enable to reduce Muon temporary memory; may reduce optimizer throughput.
+  muon_low_memory: false
   muon_adamw_lr: 0.0004
   muon_adamw_weight_decay: 0.0
   seed: 42

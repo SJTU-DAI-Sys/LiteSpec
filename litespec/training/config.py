@@ -114,6 +114,12 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
         help="Maximum same-shape matrices per compute rank in each Muon batch.",
     )
     train.add_argument("--muon-adamw-lr", type=float, default=0.0004)
+    train.add_argument(
+        "--muon-low-memory",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Disable Muon batch prefetch to further reduce temporary memory.",
+    )
     train.add_argument("--muon-adamw-weight-decay", type=float, default=0.1)
     train.add_argument("--seed", type=int, default=42)
     train.add_argument("--tp-size", type=int, default=1)
